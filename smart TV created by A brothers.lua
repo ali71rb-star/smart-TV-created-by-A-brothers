@@ -22,6 +22,7 @@ local channelsDialog = nil
 local newsDialog = nil     
 local religiousDialog = nil
 local sportsDialog = nil
+local kidsDialog = nil
 local favoritesDialog = nil 
 local aboutDialog = nil
 
@@ -92,18 +93,20 @@ local qualityLevels = {"Auto", "1080p", "720p", "480p", "360p"}
 local entertainmentChannels = {
   { name = "ARY Digital", url = "https://tamashaweb.com/ary-digital-live" },
   { name = "ARY Zindagi", url = "https://www.tamashaweb.com/ary-zindagi-live" },
-  { name = "Green Entertainment", url = "https://tamashaweb.com/green-entertainment" },
-  { name = "HUM TV", url = "https://tamashaweb.com/hum-tv-live" },
   { name = "Geo Entertainment", url = "https://harpalgeo.tv/live" },
+  { name = "Green Entertainment", url = "https://tamashaweb.com/green-entertainment" },
+  { name = "Hum Masala", url = "https://www.tamashaweb.com/hum-masala-live" },
+  { name = "Hum Sitaray", url = "https://tamashaweb.com/hum-sitaray-live" },
+  { name = "HUM TV", url = "https://tamashaweb.com/hum-tv-live" },
   { name = "PTV Home", url = "https://tamashaweb.com/ptv-home" }
 }
 
 local newsChannels = {
   { name = "Aaj News", url = "https://www.tamashaweb.com/aaj-news-live" },
-  { name = "ARY News", url = "https://www.ary-news" },
+  { name = "ARY News", url = "https://tamashaweb.com/ary-news" },
   { name = "ARY News 2", url = "http://live.arynews.tv/pk/" },
   { name = "City 42", url = "https://www.tamashaweb.com/city-42-live" },
-  { name = "Geo News", url = "https://www.geo-news-live" },
+  { name = "Geo News", url = "https://tamashaweb.com/geo-news-live" },
   { name = "Geo News 2", url = "https://live.geo.tv/" },
   { name = "PTV News", url = "https://tamashaweb.com/ptv-news" },
   { name = "Samaa TV", url = "https://tamashaweb.com/samaa-tv-live" }
@@ -121,6 +124,11 @@ local sportsChannels = {
   { name = "PTV Sports", url = "https://tamashaweb.com/ptv-sports" }
 }
 
+local kidsChannels = {
+  { name = "Baby TV", url = "https://tamashaweb.com/baby-tv-live" },
+  { name = "Cartoon Network", url = "https://pakistan-tv.vercel.app/channels/cartoon-network-live" }
+}
+
 function dismissAllDialogs()
   if mainDialog then pcall(function() mainDialog.dismiss() end) mainDialog = nil end
   if settingsDialog then pcall(function() settingsDialog.dismiss() end) settingsDialog = nil end
@@ -128,6 +136,7 @@ function dismissAllDialogs()
   if newsDialog then pcall(function() newsDialog.dismiss() end) newsDialog = nil end
   if religiousDialog then pcall(function() religiousDialog.dismiss() end) religiousDialog = nil end
   if sportsDialog then pcall(function() sportsDialog.dismiss() end) sportsDialog = nil end
+  if kidsDialog then pcall(function() kidsDialog.dismiss() end) kidsDialog = nil end
   if favoritesDialog then pcall(function() favoritesDialog.dismiss() end) favoritesDialog = nil end
   if aboutDialog then pcall(function() aboutDialog.dismiss() end) aboutDialog = nil end
 end
@@ -236,7 +245,6 @@ function openMiniPlayer(list, index, categoryType)
   webContainer = FrameLayout(service)
   webContainer.setBackgroundColor(0xFF000000)
   
-  -- فکس: کرومیم سسپنشن سے بچنے کے لیے آڈیو موڈ میں بھی ہائیٹ اسٹیبل رکھیں گے
   local currentHeight = portraitHeight
   local webParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, currentHeight)
   webContainer.setLayoutParams(webParams)
@@ -491,7 +499,6 @@ function openMiniPlayer(list, index, categoryType)
     end)
   end
 
-  -- فکس مڈل ویئر: اسمارٹ منیمائزیشن فنکشنلٹی
   local handleMinimizeAction = function()
     if not _G.isBackgroundPlayEnabled then
       speakText("Background play is turned off in settings")
@@ -505,7 +512,6 @@ function openMiniPlayer(list, index, categoryType)
     pcall(function()
       if playerDialog then
         local win = playerDialog.getWindow()
-        -- 1x1 کرنے کے بجائے ونڈو کو ٹرانسپیرنٹ اور کلک تھرو (FLAG_NOT_TOUCHABLE) فلیگ دیں گے
         win.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
         win.setBackgroundDrawable(ColorDrawable(0x00000000)) 
         
@@ -551,6 +557,7 @@ function openMiniPlayer(list, index, categoryType)
     _G.SmartTV_PlayerDialog = nil
     
     if categoryType == "entertainment" then showChannelsMenu()
+    elseif categoryType == "kids" then showKidsMenu()
     elseif categoryType == "news" then showNewsMenu()
     elseif categoryType == "religious" then showReligiousMenu()
     elseif categoryType == "sports" then showSportsMenu()
@@ -735,17 +742,26 @@ function openMiniPlayer(list, index, categoryType)
       }
   })();]]
 
-  local function startVideoPollingCheck(overlayView, webInstance, boundLoadId)
+  local function startVideoPollingCheck(overlayView, webInstance, boundLoadId, channelUrl)
     local attempts = 0
     local maxAttempts = 50 
+    
+    local targetClean = channelUrl:gsub("https?://", ""):gsub("www%.", "")
+    if targetClean:sub(-1) == "/" then targetClean = targetClean:sub(1, -2) end
     
     local function loop()
       if not webInstance or not overlayView then return end
       if boundLoadId ~= currentLoadId then return end 
       
       attempts = attempts + 1
-      webInstance.evaluateJavascript([[
+      
+      local jsCheck = [[
         (function() {
+          var current = window.location.href.replace(/^https?:\/\//, '').replace(/^www\./, '');
+          var target = "]] .. targetClean .. [[";
+          if (current.indexOf(target) === -1 && target !== "about:blank") {
+            return "WRONG_PAGE";
+          }
           var v = document.querySelector('video');
           if (!v) {
             var iframes = document.querySelectorAll('iframe');
@@ -765,14 +781,16 @@ function openMiniPlayer(list, index, categoryType)
           }
           return "STILL_LOADING";
         })();
-      ]], luajava.createProxy("android.webkit.ValueCallback", {
+      ]]
+
+      webInstance.evaluateJavascript(jsCheck, luajava.createProxy("android.webkit.ValueCallback", {
         onReceiveValue = function(res)
           if boundLoadId ~= currentLoadId then return end 
           
           local isReady = (res and (res:find("READY_PLAYING") or res == '"READY_PLAYING"'))
           
           if isReady or attempts >= maxAttempts then
-            webInstance.evaluateJavascript(cleanJS, null)
+            webInstance.evaluateJavascript(cleanJS, nil)
             pcall(function() overlayView.setVisibility(View.GONE) end) 
             
             if _G.isChannelLoading then
@@ -807,17 +825,24 @@ function openMiniPlayer(list, index, categoryType)
     syncFavText()
     
     speakText("Now playing " .. channel.name)
-    pcall(function() overlay.setVisibility(View.VISIBLE) end) 
+    pcall(function() 
+      overlay.setText("Channel Loading...")
+      overlay.setVisibility(View.VISIBLE) 
+    end) 
     myWebView.loadUrl(channel.url)
     
-    startVideoPollingCheck(overlay, myWebView, currentLoadId)
+    startVideoPollingCheck(overlay, myWebView, currentLoadId, channel.url)
   end
 
+  currentLoadId = currentLoadId + 1
   _G.isChannelLoading = true 
-  pcall(function() overlay.setVisibility(View.VISIBLE) end) 
+  pcall(function() 
+    overlay.setText("Channel Loading...")
+    overlay.setVisibility(View.VISIBLE) 
+  end) 
   myWebView.loadUrl(channel.url)
   
-  startVideoPollingCheck(overlay, myWebView, currentLoadId)
+  startVideoPollingCheck(overlay, myWebView, currentLoadId, channel.url)
   safeShow(playerDialog)
 end
 
@@ -911,6 +936,33 @@ function showChannelsMenu()
   safeShow(channelsDialog)
 end
 
+function showKidsMenu()
+  dismissAllDialogs()
+  local sv = ScrollView(service)
+  local layout = LinearLayout(service)
+  layout.setOrientation(LinearLayout.VERTICAL)
+  layout.setPadding(60, 40, 60, 40)
+  sv.addView(layout)
+  
+  local title = TextView(service)
+  title.setText("Live Kids")
+  title.setTextSize(18)
+  title.setGravity(Gravity.CENTER)
+  title.setPadding(0, 10, 0, 30)
+  layout.addView(title)
+  
+  for i, ch in ipairs(kidsChannels) do 
+    layout.addView(createChannelButton(ch, kidsChannels, i, "kids")) 
+  end
+  
+  local btnBack = Button(service)
+  btnBack.setText("Back to Main Menu")
+  btnBack.setOnClickListener(View.OnClickListener({ onClick = function(v) dismissAllDialogs() showTvMenu() end }))
+  layout.addView(btnBack)
+  kidsDialog = AlertDialog.Builder(service).setView(sv).create()
+  safeShow(kidsDialog)
+end
+
 function showReligiousMenu()
   dismissAllDialogs()
   local sv = ScrollView(service)
@@ -986,7 +1038,8 @@ function showAboutMenu()
                  "1. Entertainment: Top standard entertainment dramas and shows.\n" ..
                  "2. Live News: Mainstream news networks directly streamed.\n" ..
                  "3. Religious: Holy streams including Makkah Live and spiritual content.\n" ..
-                 "4. Live Sports: Realtime action of your favorite matches.\n\n" ..
+                 "4. Live Sports: Realtime action of your favorite matches.\n" ..
+                 "5. Live Kids: Fun and educational content for children.\n\n" ..
                  "Developed with accessibility compliance for effortless control.")
   infoTxt.setPadding(0, 10, 0, 30)
   layout.addView(infoTxt)
@@ -1120,14 +1173,12 @@ function showSettingsMenu()
 end
 
 function showTvMenu()
-  -- فکس مڈل ویئر: ٹرانسپیرنٹ فلیگز کو ہٹا کر پلیئر کو دوبارہ بحال کرنا
   if _G.SmartTV_IsPlayerMinimized and _G.SmartTV_PlayerDialog then
     _G.SmartTV_IsPlayerMinimized = false
     dismissAllDialogs()
     pcall(function()
       if _G.SmartTV_PlayerDialog then
         local win = _G.SmartTV_PlayerDialog.getWindow()
-        -- کلک تھرو فلیگ ختم کریں اور بلیک بیک گراؤنڈ بحال کریں
         win.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) 
         win.setBackgroundDrawable(ColorDrawable(0xFF000000))
         
@@ -1164,6 +1215,7 @@ function showTvMenu()
   
   local buttons = {}
   table.insert(buttons, {text="Live Entertainment", action=showChannelsMenu})
+  table.insert(buttons, {text="Live Kids", action=showKidsMenu})
   table.insert(buttons, {text="Live News", action=showNewsMenu})
   table.insert(buttons, {text="Live Religious", action=showReligiousMenu})
   table.insert(buttons, {text="Live Sports", action=showSportsMenu})
