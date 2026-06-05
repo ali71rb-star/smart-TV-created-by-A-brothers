@@ -20,6 +20,8 @@ local mainDialog = nil
 local settingsDialog = nil
 local channelsDialog = nil 
 local newsDialog = nil     
+local aryNewsDialog = nil  
+local geoNewsDialog = nil  
 local religiousDialog = nil
 local sportsDialog = nil
 local kidsDialog = nil
@@ -103,13 +105,20 @@ local entertainmentChannels = {
 
 local newsChannels = {
   { name = "Aaj News", url = "https://www.tamashaweb.com/aaj-news-live" },
-  { name = "ARY News", url = "https://tamashaweb.com/ary-news" },
-  { name = "ARY News 2", url = "http://live.arynews.tv/pk/" },
   { name = "City 42", url = "https://www.tamashaweb.com/city-42-live" },
-  { name = "Geo News", url = "https://tamashaweb.com/geo-news-live" },
-  { name = "Geo News 2", url = "https://live.geo.tv/" },
   { name = "PTV News", url = "https://tamashaweb.com/ptv-news" },
   { name = "Samaa TV", url = "https://tamashaweb.com/samaa-tv-live" }
+}
+
+local aryNewsChannels = {
+  { name = "ARY News 1", url = "https://tamashaweb.com/ary-news" },
+  { name = "ARY News 2", url = "http://live.arynews.tv/pk/" }
+}
+
+local geoNewsChannels = {
+  { name = "Geo News 1", url = "https://tamashaweb.com/geo-news-live" },
+  { name = "Geo News 2", url = "https://live.geo.tv/" },
+  { name = "Geo News 3", url = "https://live.geo.tv/stream2" }
 }
 
 local religiousChannels = {
@@ -134,6 +143,8 @@ function dismissAllDialogs()
   if settingsDialog then pcall(function() settingsDialog.dismiss() end) settingsDialog = nil end
   if channelsDialog then pcall(function() channelsDialog.dismiss() end) channelsDialog = nil end
   if newsDialog then pcall(function() newsDialog.dismiss() end) newsDialog = nil end
+  if aryNewsDialog then pcall(function() aryNewsDialog.dismiss() end) aryNewsDialog = nil end
+  if geoNewsDialog then pcall(function() geoNewsDialog.dismiss() end) geoNewsDialog = nil end
   if religiousDialog then pcall(function() religiousDialog.dismiss() end) religiousDialog = nil end
   if sportsDialog then pcall(function() sportsDialog.dismiss() end) sportsDialog = nil end
   if kidsDialog then pcall(function() kidsDialog.dismiss() end) kidsDialog = nil end
@@ -559,6 +570,8 @@ function openMiniPlayer(list, index, categoryType)
     if categoryType == "entertainment" then showChannelsMenu()
     elseif categoryType == "kids" then showKidsMenu()
     elseif categoryType == "news" then showNewsMenu()
+    elseif categoryType == "news_ary" then showAryNewsMenu()
+    elseif categoryType == "news_geo" then showGeoNewsMenu()
     elseif categoryType == "religious" then showReligiousMenu()
     elseif categoryType == "sports" then showSportsMenu()
     elseif categoryType == "favorites" then showFavoritesMenu()
@@ -882,6 +895,60 @@ function showFavoritesMenu()
   safeShow(favoritesDialog)
 end
 
+function showAryNewsMenu()
+  dismissAllDialogs()
+  local sv = ScrollView(service)
+  local layout = LinearLayout(service)
+  layout.setOrientation(LinearLayout.VERTICAL)
+  layout.setPadding(60, 40, 60, 40)
+  sv.addView(layout)
+  
+  local title = TextView(service)
+  title.setText("ARY News")
+  title.setTextSize(18)
+  title.setGravity(Gravity.CENTER)
+  title.setPadding(0, 10, 0, 30)
+  layout.addView(title)
+  
+  for i, ch in ipairs(aryNewsChannels) do 
+    layout.addView(createChannelButton(ch, aryNewsChannels, i, "news_ary")) 
+  end
+  
+  local btnBack = Button(service)
+  btnBack.setText("Back to News Menu")
+  btnBack.setOnClickListener(View.OnClickListener({ onClick = function(v) dismissAllDialogs() showNewsMenu() end }))
+  layout.addView(btnBack)
+  aryNewsDialog = AlertDialog.Builder(service).setView(sv).create()
+  safeShow(aryNewsDialog)
+end
+
+function showGeoNewsMenu()
+  dismissAllDialogs()
+  local sv = ScrollView(service)
+  local layout = LinearLayout(service)
+  layout.setOrientation(LinearLayout.VERTICAL)
+  layout.setPadding(60, 40, 60, 40)
+  sv.addView(layout)
+  
+  local title = TextView(service)
+  title.setText("Geo News")
+  title.setTextSize(18)
+  title.setGravity(Gravity.CENTER)
+  title.setPadding(0, 10, 0, 30)
+  layout.addView(title)
+  
+  for i, ch in ipairs(geoNewsChannels) do 
+    layout.addView(createChannelButton(ch, geoNewsChannels, i, "news_geo")) 
+  end
+  
+  local btnBack = Button(service)
+  btnBack.setText("Back to News Menu")
+  btnBack.setOnClickListener(View.OnClickListener({ onClick = function(v) dismissAllDialogs() showNewsMenu() end }))
+  layout.addView(btnBack)
+  geoNewsDialog = AlertDialog.Builder(service).setView(sv).create()
+  safeShow(geoNewsDialog)
+end
+
 function showNewsMenu()
   dismissAllDialogs()
   local sv = ScrollView(service)
@@ -897,9 +964,27 @@ function showNewsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  for i, ch in ipairs(newsChannels) do 
-    layout.addView(createChannelButton(ch, newsChannels, i, "news")) 
-  end
+  -- Aaj News
+  layout.addView(createChannelButton(newsChannels[1], newsChannels, 1, "news"))
+  
+  -- ARY News Sub-category Button
+  local btnAryCat = Button(service)
+  btnAryCat.setText("ARY News")
+  btnAryCat.setOnClickListener(View.OnClickListener({ onClick = function(v) showAryNewsMenu() end }))
+  layout.addView(btnAryCat)
+  
+  -- City 42
+  layout.addView(createChannelButton(newsChannels[2], newsChannels, 2, "news"))
+  
+  -- Geo News Sub-category Button
+  local btnGeoCat = Button(service)
+  btnGeoCat.setText("Geo News")
+  btnGeoCat.setOnClickListener(View.OnClickListener({ onClick = function(v) showGeoNewsMenu() end }))
+  layout.addView(btnGeoCat)
+  
+  -- PTV News & Samaa TV
+  layout.addView(createChannelButton(newsChannels[3], newsChannels, 3, "news"))
+  layout.addView(createChannelButton(newsChannels[4], newsChannels, 4, "news"))
   
   local btnBack = Button(service)
   btnBack.setText("Back to Main Menu")
