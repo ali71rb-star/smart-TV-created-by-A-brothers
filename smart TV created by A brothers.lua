@@ -1,21 +1,25 @@
 -- [Startup Sound Injector Code Start]
-if startup_sound_mp ~= nil then
-    pcall(function() startup_sound_mp.release() end)
-end
 pcall(function()
-    local MediaPlayer = luajava.bindClass("android.media.MediaPlayer")
-    startup_sound_mp = luajava.new(MediaPlayer)
-    startup_sound_mp.setDataSource("/sdcard/call_offer.mp3")
-    startup_sound_mp.setOnCompletionListener(luajava.createProxy("android.media.MediaPlayer$OnCompletionListener", {
-        onCompletion = function(mediaPlayer)
-            pcall(function() 
-                mediaPlayer.release() 
-                startup_sound_mp = nil
-            end)
+    local File = luajava.bindClass("java.io.File")
+    local sound_path = "/sdcard/解说/Plugins/Smart TV Created By A Brothers/Smart TV Created By A Brothers created by A brothers.mp3"
+    if luajava.new(File, sound_path).exists() then
+        if startup_sound_mp ~= nil then
+            pcall(function() startup_sound_mp.release() end)
         end
-    }))
-    startup_sound_mp.prepare()
-    startup_sound_mp.start()
+        local MediaPlayer = luajava.bindClass("android.media.MediaPlayer")
+        startup_sound_mp = luajava.new(MediaPlayer)
+        startup_sound_mp.setDataSource(sound_path)
+        startup_sound_mp.setOnCompletionListener(luajava.createProxy("android.media.MediaPlayer$OnCompletionListener", {
+            onCompletion = function(mediaPlayer)
+                pcall(function() 
+                    mediaPlayer.release() 
+                    startup_sound_mp = nil
+                end)
+            end
+        }))
+        startup_sound_mp.prepare()
+        startup_sound_mp.start()
+    end
 end)
 -- [Startup Sound Injector Code End]\nrequire "import"
 import "android.widget.*"
