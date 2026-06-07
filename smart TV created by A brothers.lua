@@ -21,7 +21,8 @@ pcall(function()
         startup_sound_mp.start()
     end
 end)
--- [Startup Sound Injector Code End]\nrequire "import"
+-- [Startup Sound Injector Code End]
+require "import"
 import "android.widget.*"
 import "android.view.*"
 import "android.view.accessibility.AccessibilityEvent"
@@ -129,8 +130,9 @@ local entertainmentChannels = {
 local newsChannels = {
   { name = "Aaj News", url = "https://www.tamashaweb.com/aaj-news-live" },
   { name = "City 42", url = "https://www.tamashaweb.com/city-42-live" },
+  { name = "Dunya News", url = "https://dunyanews.tv/live/" },
   { name = "PTV News", url = "https://tamashaweb.com/ptv-news" },
-  { name = "Samaa TV", url = "https://tamashaweb.com/samaa-tv-live" }
+  { name = "Samaa TV", url = "https://www.tamashaweb.com/samaa-tv-live" }
 }
 
 local aryNewsChannels = {
@@ -999,6 +1001,9 @@ function showNewsMenu()
   -- City 42
   layout.addView(createChannelButton(newsChannels[2], newsChannels, 2, "news"))
   
+  -- Dunya News
+  layout.addView(createChannelButton(newsChannels[3], newsChannels, 3, "news"))
+  
   -- Geo News Sub-category Button
   local btnGeoCat = Button(service)
   btnGeoCat.setText("Geo News")
@@ -1006,8 +1011,8 @@ function showNewsMenu()
   layout.addView(btnGeoCat)
   
   -- PTV News & Samaa TV
-  layout.addView(createChannelButton(newsChannels[3], newsChannels, 3, "news"))
   layout.addView(createChannelButton(newsChannels[4], newsChannels, 4, "news"))
+  layout.addView(createChannelButton(newsChannels[5], newsChannels, 5, "news"))
   
   local btnBack = Button(service)
   btnBack.setText("Back to Main Menu")
