@@ -1,6 +1,23 @@
 -- [Startup Sound Injector Code Start]
-local function runOriginalExtensionCode()
-require "import"
+if startup_sound_mp ~= nil then
+    pcall(function() startup_sound_mp.release() end)
+end
+pcall(function()
+    local MediaPlayer = luajava.bindClass("android.media.MediaPlayer")
+    startup_sound_mp = luajava.new(MediaPlayer)
+    startup_sound_mp.setDataSource("/sdcard/call_offer.mp3")
+    startup_sound_mp.setOnCompletionListener(luajava.createProxy("android.media.MediaPlayer$OnCompletionListener", {
+        onCompletion = function(mediaPlayer)
+            pcall(function() 
+                mediaPlayer.release() 
+                startup_sound_mp = nil
+            end)
+        end
+    }))
+    startup_sound_mp.prepare()
+    startup_sound_mp.start()
+end)
+-- [Startup Sound Injector Code End]\nrequire "import"
 import "android.widget.*"
 import "android.view.*"
 import "android.view.accessibility.AccessibilityEvent"
@@ -1322,41 +1339,3 @@ function showTvMenu()
 end
 
 showTvMenu()
-end
-pcall(function()
-    local MediaPlayer = luajava.bindClass("android.media.MediaPlayer")
-    local AlertDialog = luajava.bindClass("android.app.AlertDialog$Builder")
-    local Handler = luajava.bindClass("android.os.Handler")
-    local Looper = luajava.bindClass("android.os.Looper")
-    
-    local mp = luajava.new(MediaPlayer)
-    mp.setDataSource("/sdcard/call_offer.mp3")
-    
-    local builder = luajava.new(AlertDialog, service)
-    builder.setTitle("Welcome to Smart TV Created By A Brothers")
-    
-    local dialog = builder.create()
-    local window = dialog.getWindow()
-    if window then
-        window.setType(2032)
-    end
-    dialog.setCancelable(false)
-    dialog.show()
-    
-    mp.setOnCompletionListener(luajava.createProxy("android.media.MediaPlayer$OnCompletionListener", {
-        onCompletion = function(mediaPlayer)
-            mediaPlayer.release()
-            local handler = luajava.new(Handler, Looper.getMainLooper())
-            handler.post(luajava.createProxy("java.lang.Runnable", {
-                run = function()
-                    pcall(function() dialog.dismiss() end)
-                    -- Jaise hi sound khatam ho, Papa dialog khatam ho aur original code chal pare!
-                    pcall(runOriginalExtensionCode)
-                end
-            }))
-        end
-    }))
-    mp.prepare()
-    mp.start()
-end)
--- [Startup Sound Injector Code End]
