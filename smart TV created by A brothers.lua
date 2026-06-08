@@ -240,7 +240,7 @@ function closeExtension()
   end)
   speakText("Extension Successfully Closed")
   
-  pcall(function() service.performGlobalAction(1) end)
+  -- یہاں سے فکس کیا گیا ہے: نیچے والی ایپ کو بند ہونے سے بچانے کے لیے گلوبل بیک ایکشن ہٹا دیا گیا ہے
 end
 
 function safeShow(d)
@@ -277,7 +277,6 @@ function openMiniPlayer(list, index, categoryType)
     _G.SmartTV_IsPlayerMinimized = false
   end
 
-  -- تمام نیوز چینلز (بشمول سب کیٹیگریز) کو یکجا کرنے کی لاجک
   if categoryType == "news" or categoryType == "news_ary" or categoryType == "news_geo" then
     local flatNews = {
       newsChannels[1],    -- Aaj News
@@ -617,7 +616,7 @@ function openMiniPlayer(list, index, categoryType)
       end
     end)
     
-    pcall(function() service.performGlobalAction(2) end) 
+    -- یہاں سے فکس کیا گیا ہے: ہوم اسکرین پر جانے والا گلوبل ایکشن ہٹا دیا گیا ہے تاکہ کرنٹ ونڈو برقرار رہے
   end
 
   local btnMinimize = Button(service)
@@ -1045,28 +1044,21 @@ function showNewsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  -- Aaj News
   layout.addView(createChannelButton(newsChannels[1], newsChannels, 1, "news"))
-  
-  -- Dunya News
   layout.addView(createChannelButton(newsChannels[2], newsChannels, 2, "news"))
   
-  -- ARY News Sub-category Button
   local btnAryCat = Button(service)
   btnAryCat.setText("ARY News")
   btnAryCat.setOnClickListener(View.OnClickListener({ onClick = function(v) showAryNewsMenu() end }))
   layout.addView(btnAryCat)
   
-  -- City 42
   layout.addView(createChannelButton(newsChannels[3], newsChannels, 3, "news"))
   
-  -- Geo News Sub-category Button
   local btnGeoCat = Button(service)
   btnGeoCat.setText("Geo News")
   btnGeoCat.setOnClickListener(View.OnClickListener({ onClick = function(v) showGeoNewsMenu() end }))
   layout.addView(btnGeoCat)
   
-  -- PTV News & Samaa TV
   layout.addView(createChannelButton(newsChannels[4], newsChannels, 4, "news"))
   layout.addView(createChannelButton(newsChannels[5], newsChannels, 5, "news"))
   
