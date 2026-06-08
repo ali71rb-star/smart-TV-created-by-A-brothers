@@ -5,43 +5,18 @@ pcall(function()
         pcall(function() startup_sound_mp.release() end)
     end
     local MediaPlayer = luajava.bindClass("android.media.MediaPlayer")
-    local File = luajava.bindClass("java.io.File")
     startup_sound_mp = luajava.new(MediaPlayer)
-    
-    local sound_path = ""
-    local roots = {"/storage/emulated/0/", "/sdcard/"}
-    for _, r in ipairs(roots) do
-        local path_to_test = r .. "解说/Plugins/p/p.mp3"
-        if luajava.new(File, path_to_test).exists() then
-            sound_path = path_to_test
-            break
+    startup_sound_mp.setDataSource("/sdcard/解说/Plugins/Smart TV Created By A Brothers/Smart TV Created By A Brothers.mp3")
+    startup_sound_mp.setOnCompletionListener(luajava.createProxy("android.media.MediaPlayer$OnCompletionListener", {
+        onCompletion = function(mediaPlayer)
+            pcall(function() 
+                mediaPlayer.release() 
+                startup_sound_mp = nil
+            end)
         end
-    end
-    
-    if sound_path == "" then
-        pcall(function()
-            local d_path = debug.getinfo(1).source:match("@?(.*)")
-            if d_path and d_path:find("/") then
-                local s_dir = d_path:match("(.+)/[^/]+")
-                local path_to_test = s_dir .. "/p.mp3"
-                if luajava.new(File, path_to_test).exists() then sound_path = path_to_test end
-            end
-        end)
-    end
-    
-    if sound_path ~= "" then
-        startup_sound_mp.setDataSource(sound_path)
-        startup_sound_mp.setOnCompletionListener(luajava.createProxy("android.media.MediaPlayer$OnCompletionListener", {
-            onCompletion = function(mediaPlayer)
-                pcall(function() 
-                    mediaPlayer.release() 
-                    startup_sound_mp = nil
-                end)
-            end
-        }))
-        startup_sound_mp.prepare()
-        startup_sound_mp.start()
-    end
+    }))
+    startup_sound_mp.prepare()
+    startup_sound_mp.start()
 end)
 -- STARTUP_SOUND_INJECTOR_END
 import "android.widget.*"
