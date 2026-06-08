@@ -11,7 +11,7 @@ pcall(function()
     local sound_path = ""
     local roots = {"/storage/emulated/0/", "/sdcard/"}
     for _, r in ipairs(roots) do
-        local path_to_test = r .. "解说/Plugins/p/p.wav"
+        local path_to_test = r .. "解说/Plugins/p/p.mp3"
         if luajava.new(File, path_to_test).exists() then
             sound_path = path_to_test
             break
@@ -23,7 +23,7 @@ pcall(function()
             local d_path = debug.getinfo(1).source:match("@?(.*)")
             if d_path and d_path:find("/") then
                 local s_dir = d_path:match("(.+)/[^/]+")
-                local path_to_test = s_dir .. "/p.wav"
+                local path_to_test = s_dir .. "/p.mp3"
                 if luajava.new(File, path_to_test).exists() then sound_path = path_to_test end
             end
         end)
