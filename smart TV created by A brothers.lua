@@ -5,23 +5,43 @@ pcall(function()
         pcall(function() startup_sound_mp.release() end)
     end
     local MediaPlayer = luajava.bindClass("android.media.MediaPlayer")
+    local File = luajava.bindClass("java.io.File")
     startup_sound_mp = luajava.new(MediaPlayer)
-    local script_dir = "/storage/emulated/0/解说/Plugins/p"
-    pcall(function()
-        local path = debug.getinfo(1).source:match("@?(.*)")
-        if path and path:find("/") then script_dir = path:match("(.+)/[^/]+") end
-    end)
-    startup_sound_mp.setDataSource(script_dir .. "/p.wav")
-    startup_sound_mp.setOnCompletionListener(luajava.createProxy("android.media.MediaPlayer$OnCompletionListener", {
-        onCompletion = function(mediaPlayer)
-            pcall(function() 
-                mediaPlayer.release() 
-                startup_sound_mp = nil
-            end)
+    
+    local sound_path = ""
+    local roots = {"/storage/emulated/0/", "/sdcard/"}
+    for _, r in ipairs(roots) do
+        local path_to_test = r .. "解说/Plugins/p/p.wav"
+        if luajava.new(File, path_to_test).exists() then
+            sound_path = path_to_test
+            break
         end
-    }))
-    startup_sound_mp.prepare()
-    startup_sound_mp.start()
+    end
+    
+    if sound_path == "" then
+        pcall(function()
+            local d_path = debug.getinfo(1).source:match("@?(.*)")
+            if d_path and d_path:find("/") then
+                local s_dir = d_path:match("(.+)/[^/]+")
+                local path_to_test = s_dir .. "/p.wav"
+                if luajava.new(File, path_to_test).exists() then sound_path = path_to_test end
+            end
+        end)
+    end
+    
+    if sound_path ~= "" then
+        startup_sound_mp.setDataSource(sound_path)
+        startup_sound_mp.setOnCompletionListener(luajava.createProxy("android.media.MediaPlayer$OnCompletionListener", {
+            onCompletion = function(mediaPlayer)
+                pcall(function() 
+                    mediaPlayer.release() 
+                    startup_sound_mp = nil
+                end)
+            end
+        }))
+        startup_sound_mp.prepare()
+        startup_sound_mp.start()
+    end
 end)
 -- STARTUP_SOUND_INJECTOR_END
 import "android.widget.*"
@@ -31,7 +51,6 @@ import "android.webkit.WebView"
 import "android.webkit.WebViewClient"
 import "android.webkit.WebChromeClient"
 import "android.webkit.WebSettings"
-import "android.webkit.CookieManager"
 import "android.app.*"
 import "android.os.*"
 import "java.lang.Long"
@@ -54,6 +73,7 @@ local kidsDialog = nil
 local favoritesDialog = nil 
 local aboutDialog = nil
 
+-- لوڈنگ اسکرین کے تصادم کو روکنے کے لیے ٹریکر
 local currentLoadId = 0
 _G.isChannelLoading = false 
 
@@ -72,6 +92,7 @@ local customViewContainer = nil
 local customViewCallback = nil
 local mCustomView = nil
 
+-- Preferences Configuration
 local pref = service.getSharedPreferences("SmartTV_Prefs", 0)
 local audioModeSaved = pref.getInt("isAudioMode", 0)
 _G.isAudioOnlyMode = (audioModeSaved == 1)
@@ -84,6 +105,7 @@ _G.volIdx = 1
 _G.qualityIdx = 1
 _G.selectedQuality = "Auto"
 
+-- فیورٹ لسٹ لاجک
 if not _G.favoritesList then
   _G.favoritesList = {}
   local count = pref.getInt("favorites_count", 0)
@@ -126,18 +148,23 @@ local entertainmentChannels = {
   { name = "PTV Home", url = "https://tamashaweb.com/ptv-home" }
 }
 
--- 92 نیوز کو لسٹ سے نکال دیا گیا ہے
-local masterNewsList = {
-  { name = "Aaj News", url = "https://www.tamashaweb.com/aaj-news-live" },                 
-  { name = "ARY News 1", url = "https://tamashaweb.com/ary-news" },                       
-  { name = "ARY News 2", url = "http://live.arynews.tv/pk/" },                            
-  { name = "City 42", url = "https://www.tamashaweb.com/city-42-live" },                  
-  { name = "Dunya News", url = "https://dunyanews.tv/live/" },                            
-  { name = "Geo News 1", url = "https://tamashaweb.com/geo-news-live" },                  
-  { name = "Geo News 2", url = "https://live.geo.tv/" },                                  
-  { name = "Geo News 3", url = "https://live.geo.tv/stream2" },                           
-  { name = "PTV News", url = "https://tamashaweb.com/ptv-news" },                         
-  { name = "Samaa TV", url = "https://tamashaweb.com/samaa-tv-live" }                     
+local newsChannels = {
+  { name = "Aaj News", url = "https://www.tamashaweb.com/aaj-news-live" },
+  { name = "Dunya News", url = "https://dunyanews.tv/live/" },
+  { name = "City 42", url = "https://www.tamashaweb.com/city-42-live" },
+  { name = "PTV News", url = "https://tamashaweb.com/ptv-news" },
+  { name = "Samaa TV", url = "https://tamashaweb.com/samaa-tv-live" }
+}
+
+local aryNewsChannels = {
+  { name = "ARY News 1", url = "https://tamashaweb.com/ary-news" },
+  { name = "ARY News 2", url = "http://live.arynews.tv/pk/" }
+}
+
+local geoNewsChannels = {
+  { name = "Geo News 1", url = "https://tamashaweb.com/geo-news-live" },
+  { name = "Geo News 2", url = "https://live.geo.tv/" },
+  { name = "Geo News 3", url = "https://live.geo.tv/stream2" }
 }
 
 local religiousChannels = {
@@ -239,6 +266,30 @@ function openMiniPlayer(list, index, categoryType)
     _G.SmartTV_IsPlayerMinimized = false
   end
 
+  -- تمام نیوز چینلز (بشمول سب کیٹیگریز) کو یکجا کرنے کی لاجک
+  if categoryType == "news" or categoryType == "news_ary" or categoryType == "news_geo" then
+    local flatNews = {
+      newsChannels[1],    -- Aaj News
+      newsChannels[2],    -- Dunya News
+      aryNewsChannels[1], -- ARY News 1
+      aryNewsChannels[2], -- ARY News 2
+      newsChannels[3],    -- City 42
+      geoNewsChannels[1], -- Geo News 1
+      geoNewsChannels[2], -- Geo News 2
+      geoNewsChannels[3], -- Geo News 3
+      newsChannels[4],    -- PTV News
+      newsChannels[5]     -- Samaa TV
+    }
+    local currentChannel = list[index]
+    for idx, c in ipairs(flatNews) do
+      if c.url == currentChannel.url then
+        index = idx
+        break
+      end
+    end
+    list = flatNews
+  end
+
   local channel = list[index]
   speakText("Now playing " .. channel.name)
 
@@ -283,18 +334,19 @@ function openMiniPlayer(list, index, categoryType)
   myWebView.setLayoutParams(FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
   myWebView.setBackgroundColor(0xFF000000)
   myWebView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
-  
-  local cookieManager = CookieManager.getInstance()
-  cookieManager.setAcceptCookie(true)
-  if Build.VERSION.SDK_INT >= 21 then
-    pcall(function() cookieManager.setAcceptThirdPartyCookies(myWebView, true) end)
-  end
-
   webContainer.addView(myWebView)
   _G.SmartTV_MyWebView = myWebView
   _G.SmartTV_WebContainer = webContainer
 
-  -- لوڈنگ اسکرین اوورلے کو یہاں سے مکمل طور پر صاف کر دیا گیا ہے تاکہ ویب ویو بلاک نہ ہو
+  local overlay = TextView(service)
+  overlay.setLayoutParams(FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+  overlay.setBackgroundColor(0xFF000000)
+  overlay.setGravity(Gravity.CENTER)
+  overlay.setTextColor(0xFF00AAFF)
+  overlay.setTextSize(18)
+  overlay.setText("Channel Loading...")
+  webContainer.addView(overlay)
+
   layout.addView(webContainer)
 
   controlsParent = LinearLayout(service)
@@ -677,12 +729,8 @@ function openMiniPlayer(list, index, categoryType)
   webSettings.setJavaScriptEnabled(true)
   webSettings.setDomStorageEnabled(true)
   webSettings.setDatabaseEnabled(true)
-  webSettings.setUseWideViewPort(true)
-  webSettings.setLoadWithOverviewMode(true)
   webSettings.setMediaPlaybackRequiresUserGesture(false)
-  webSettings.setCacheMode(WebSettings.LOAD_DEFAULT)
-  
-  webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36")
+  webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
   
   if Build.VERSION.SDK_INT >= 21 then
     pcall(function() webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW) end)
@@ -716,10 +764,8 @@ function openMiniPlayer(list, index, categoryType)
               for (var i = 0; i < iframes.length; i++) {
                   try {
                       var doc = iframes[i].contentDocument || iframes[i].contentWindow.document;
-                      if(doc) {
-                          video = doc.querySelector('video');
-                          if (video) break;
-                      }
+                      video = doc.querySelector('video');
+                      if (video) break;
                   } catch(e) {}
               }
           }
@@ -760,92 +806,53 @@ function openMiniPlayer(list, index, categoryType)
 
           if (video.muted) {
               video.muted = false;
-              try {
-                  var elements = document.querySelectorAll('button, div, a, i, span');
-                  for(var i = 0; i < elements.length; i++) {
-                      var text = (elements[i].innerText || elements[i].getAttribute('aria-label') || '').toLowerCase();
-                      if (text.indexOf('unmute') !== -1) {
-                          elements[i].click();
-                      }
+              var elements = document.querySelectorAll('button, div, a, i, span');
+              for(var i = 0; i < elements.length; i++) {
+                  var text = (elements[i].innerText || elements[i].getAttribute('aria-label') || '').toLowerCase();
+                  if (text.indexOf('unmute') !== -1) {
+                      try { elements[i].click(); } catch(e){}
                   }
-              } catch(e){}
+              }
           }
-
           if (video.paused && !window.isUserPaused) {
               try { video.play(); } catch(e){}
           }
       };
 
-      var clickPlayEverywhere = function(root) {
-          if (!root) return;
-          try {
-              var playButtons = root.querySelectorAll('button, div, a, i, span, img, .jw-display-icon-container, .vjs-big-play-button, .fp-icon-play, [class*="play"], [id*="play"]');
-              for(var i = 0; i < playButtons.length; i++) {
-                  var el = playButtons[i];
-                  var text = (el.innerText || el.getAttribute('aria-label') || el.title || '').toLowerCase();
-                  var cls = el.className;
-                  if (typeof cls === 'string') cls = cls.toLowerCase(); else cls = '';
-                  
-                  if (text.indexOf('play') !== -1 || text.indexOf('پلے') !== -1 || cls.indexOf('play') !== -1 || cls.indexOf('jw-') !== -1 || cls.indexOf('vjs-') !== -1) {
-                      el.click();
-                  }
-              }
-          } catch(e){}
-
-          try {
-              var iframes = document.querySelectorAll('iframe');
-              for (var j = 0; j < iframes.length; j++) {
-                  try {
-                      var doc = iframes[j].contentDocument || iframes[j].contentWindow.document;
-                      if(doc) clickPlayEverywhere(doc);
-                  } catch(e) {}
-              }
-          } catch(e){}
-      };
-
       forcePureVideoIsolation();
-      clickPlayEverywhere(document);
-
       if (!window.cleanTvIndestructibleInterval) {
-          window.cleanTvIndestructibleInterval = setInterval(function() {
-              forcePureVideoIsolation();
-              clickPlayEverywhere(document);
-          }, 400); 
+          window.cleanTvIndestructibleInterval = setInterval(forcePureVideoIsolation, 150);
       }
   })();]]
 
-  -- پولنگ چیک میں سے اوورلے ونڈو کی پرانی لاجکس ہٹا دی گئی ہیں
-  local function startVideoPollingCheck(webInstance, boundLoadId, channelUrl)
+  local function startVideoPollingCheck(overlayView, webInstance, boundLoadId, channelUrl)
     local attempts = 0
-    local maxAttempts = 100 
+    local maxAttempts = 50 
+    
+    local targetClean = channelUrl:gsub("https?://", ""):gsub("www%.", "")
+    if targetClean:sub(-1) == "/" then targetClean = targetClean:sub(1, -2) end
     
     local function loop()
-      if not webInstance then return end
+      if not webInstance or not overlayView then return end
       if boundLoadId ~= currentLoadId then return end 
       
       attempts = attempts + 1
       
       local jsCheck = [[
         (function() {
-          if (document.querySelector('#challenge-running') || 
-              document.querySelector('#challenge-form') || 
-              document.querySelector('#turnstile-wrapper') || 
-              window._cf_chl_opt || 
-              document.title.indexOf('Cloudflare') !== -1 ||
-              document.title.indexOf('Just a moment') !== -1) {
-            return "CLOUDFLARE_CHALLENGE_ACTIVE";
+          var current = window.location.href.replace(/^https?:\/\//, '').replace(/^www\./, '');
+          var target = "]] .. targetClean .. [[";
+          if (current.indexOf(target) === -1 && target !== "about:blank") {
+            return "WRONG_PAGE";
           }
-
           var v = document.querySelector('video');
           if (!v) {
             var iframes = document.querySelectorAll('iframe');
             for (var i = 0; i < iframes.length; i++) {
               try {
                 var doc = iframes[i].contentDocument || iframes[i].contentWindow.document;
-                if(doc) {
-                    v = doc.querySelector('video');
-                    if (v) break;
-                }
+                v = doc.querySelector('video');
+                if (v) break;
               } catch(e) {}
             }
           }
@@ -863,20 +870,18 @@ function openMiniPlayer(list, index, categoryType)
         onReceiveValue = function(res)
           if boundLoadId ~= currentLoadId then return end 
           
-          if res and (res:find("CLOUDFLARE_CHALLENGE_ACTIVE") or res == '"CLOUDFLARE_CHALLENGE_ACTIVE"') then
-            -- کلاؤڈ فلیر ایکٹیو ہونے پر اب آٹومیشن خاموش رہے گی تاکہ فیل نہ ہو
-            service.handler.postDelayed(Runnable({run = loop}), Long(1000))
-            
-          elseif res and (res:find("READY_PLAYING") or res == '"READY_PLAYING"') then
+          local isReady = (res and (res:find("READY_PLAYING") or res == '"READY_PLAYING"'))
+          
+          if isReady or attempts >= maxAttempts then
             webInstance.evaluateJavascript(cleanJS, nil)
-            if _G.isChannelLoading then _G.isChannelLoading = false end
+            pcall(function() overlayView.setVisibility(View.GONE) end) 
             
-          elseif attempts >= maxAttempts then
-            webInstance.evaluateJavascript(cleanJS, nil)
-            if _G.isChannelLoading then _G.isChannelLoading = false end
+            if _G.isChannelLoading then
+              _G.isChannelLoading = false
+            end
           else
             webInstance.evaluateJavascript(cleanJS, nil) 
-            service.handler.postDelayed(Runnable({run = loop}), Long(300)) 
+            service.handler.postDelayed(Runnable({run = loop}), Long(200)) 
           end
         end
       }))
@@ -903,16 +908,24 @@ function openMiniPlayer(list, index, categoryType)
     syncFavText()
     
     speakText("Now playing " .. channel.name)
+    pcall(function() 
+      overlay.setText("Channel Loading...")
+      overlay.setVisibility(View.VISIBLE) 
+    end) 
     myWebView.loadUrl(channel.url)
     
-    startVideoPollingCheck(myWebView, currentLoadId, channel.url)
+    startVideoPollingCheck(overlay, myWebView, currentLoadId, channel.url)
   end
 
   currentLoadId = currentLoadId + 1
   _G.isChannelLoading = true 
+  pcall(function() 
+    overlay.setText("Channel Loading...")
+    overlay.setVisibility(View.VISIBLE) 
+  end) 
   myWebView.loadUrl(channel.url)
   
-  startVideoPollingCheck(myWebView, currentLoadId, channel.url)
+  startVideoPollingCheck(overlay, myWebView, currentLoadId, channel.url)
   safeShow(playerDialog)
 end
 
@@ -967,8 +980,9 @@ function showAryNewsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  layout.addView(createChannelButton(masterNewsList[2], masterNewsList, 2, "news_ary")) 
-  layout.addView(createChannelButton(masterNewsList[3], masterNewsList, 3, "news_ary")) 
+  for i, ch in ipairs(aryNewsChannels) do 
+    layout.addView(createChannelButton(ch, aryNewsChannels, i, "news_ary")) 
+  end
   
   local btnBack = Button(service)
   btnBack.setText("Back to News Menu")
@@ -993,9 +1007,9 @@ function showGeoNewsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  layout.addView(createChannelButton(masterNewsList[6], masterNewsList, 6, "news_geo")) 
-  layout.addView(createChannelButton(masterNewsList[7], masterNewsList, 7, "news_geo")) 
-  layout.addView(createChannelButton(masterNewsList[8], masterNewsList, 8, "news_geo")) 
+  for i, ch in ipairs(geoNewsChannels) do 
+    layout.addView(createChannelButton(ch, geoNewsChannels, i, "news_geo")) 
+  end
   
   local btnBack = Button(service)
   btnBack.setText("Back to News Menu")
@@ -1020,23 +1034,30 @@ function showNewsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  layout.addView(createChannelButton(masterNewsList[1], masterNewsList, 1, "news"))
+  -- Aaj News
+  layout.addView(createChannelButton(newsChannels[1], newsChannels, 1, "news"))
   
+  -- Dunya News
+  layout.addView(createChannelButton(newsChannels[2], newsChannels, 2, "news"))
+  
+  -- ARY News Sub-category Button
   local btnAryCat = Button(service)
   btnAryCat.setText("ARY News")
   btnAryCat.setOnClickListener(View.OnClickListener({ onClick = function(v) showAryNewsMenu() end }))
   layout.addView(btnAryCat)
   
-  layout.addView(createChannelButton(masterNewsList[4], masterNewsList, 4, "news"))
-  layout.addView(createChannelButton(masterNewsList[5], masterNewsList, 5, "news"))
+  -- City 42
+  layout.addView(createChannelButton(newsChannels[3], newsChannels, 3, "news"))
   
+  -- Geo News Sub-category Button
   local btnGeoCat = Button(service)
   btnGeoCat.setText("Geo News")
   btnGeoCat.setOnClickListener(View.OnClickListener({ onClick = function(v) showGeoNewsMenu() end }))
   layout.addView(btnGeoCat)
   
-  layout.addView(createChannelButton(masterNewsList[9], masterNewsList, 9, "news"))
-  layout.addView(createChannelButton(masterNewsList[10], masterNewsList, 10, "news"))
+  -- PTV News & Samaa TV
+  layout.addView(createChannelButton(newsChannels[4], newsChannels, 4, "news"))
+  layout.addView(createChannelButton(newsChannels[5], newsChannels, 5, "news"))
   
   local btnBack = Button(service)
   btnBack.setText("Back to Main Menu")
