@@ -9,13 +9,13 @@ pcall(function()
     startup_sound_mp = luajava.new(MediaPlayer)
     
     local sound_path = ""
-    local ext_variants = {"mp3", "aac", "wav", "ogg", "m4a"}
-    local roots = {"/storage/emulated/0/", "/sdcard/"}
-    local target_ext = "Smart TV Created By A Brothers"
+    local roots = {"/storage/emulated/0/解说/Plugins/", "/sdcard/解说/Plugins/"}
+    local target_name = "Smart TV Created By A Brothers"
+    local exts = {".mp3", ".aac", ".wav", ".ogg", ".m4a"}
     
     for _, r in ipairs(roots) do
-        for _, ev in ipairs(ext_variants) do
-            local path_to_test = string.format("%s解说/Plugins/%s/%s.%s", r, target_ext, target_ext, ev)
+        for _, e in ipairs(exts) do
+            local path_to_test = r .. target_name .. "/" .. target_name .. e
             if luajava.new(File, path_to_test).exists() then
                 sound_path = path_to_test
                 break
@@ -29,8 +29,8 @@ pcall(function()
             local d_path = debug.getinfo(1).source:match("@?(.*)")
             if d_path and d_path:find("/") then
                 local s_dir = d_path:match("(.+)/[^/]+")
-                for _, ev in ipairs(ext_variants) do
-                    local path_to_test = string.format("%s/%s.%s", s_dir, target_ext, ev)
+                for _, e in ipairs(exts) do
+                    local path_to_test = s_dir .. "/" .. target_name .. e
                     if luajava.new(File, path_to_test).exists() then 
                         sound_path = path_to_test 
                         break
@@ -159,10 +159,12 @@ local entertainmentChannels = {
   { name = "PTV Home", url = "https://tamashaweb.com/ptv-home" }
 }
 
+-- نیوز چینلز الفابیٹیکل آرڈر (A to Z) میں ترتیب دیے گئے ہیں
 local newsChannels = {
   { name = "Aaj News", url = "https://www.tamashaweb.com/aaj-news-live" },
-  { name = "Dunya News", url = "https://dunyanews.tv/live/" },
+  { name = "Al Jazeera", url = "https://tamashaweb.com/al-jazeera" }, -- درست لنک اور صحیح الفابیٹیکل پوزیشن
   { name = "City 42", url = "https://www.tamashaweb.com/city-42-live" },
+  { name = "Dunya News", url = "https://dunyanews.tv/live/" },
   { name = "PTV News", url = "https://tamashaweb.com/ptv-news" },
   { name = "Samaa TV", url = "https://tamashaweb.com/samaa-tv-live" }
 }
@@ -239,8 +241,6 @@ function closeExtension()
     Toast.makeText(service, "Extension Successfully Closed", Toast.LENGTH_SHORT).show()
   end)
   speakText("Extension Successfully Closed")
-  
-  -- یہاں سے فکس کیا گیا ہے: نیچے والی ایپ کو بند ہونے سے بچانے کے لیے گلوبل بیک ایکشن ہٹا دیا گیا ہے
 end
 
 function safeShow(d)
@@ -278,17 +278,19 @@ function openMiniPlayer(list, index, categoryType)
   end
 
   if categoryType == "news" or categoryType == "news_ary" or categoryType == "news_geo" then
+    -- فلیٹ لسٹ کو بھی الفابیٹیکل آرڈر کے مطابق ترتیب دیا گیا ہے
     local flatNews = {
       newsChannels[1],    -- Aaj News
-      newsChannels[2],    -- Dunya News
+      newsChannels[2],    -- Al Jazeera
       aryNewsChannels[1], -- ARY News 1
       aryNewsChannels[2], -- ARY News 2
       newsChannels[3],    -- City 42
+      newsChannels[4],    -- Dunya News
       geoNewsChannels[1], -- Geo News 1
       geoNewsChannels[2], -- Geo News 2
       geoNewsChannels[3], -- Geo News 3
-      newsChannels[4],    -- PTV News
-      newsChannels[5]     -- Samaa TV
+      newsChannels[5],    -- PTV News
+      newsChannels[6]     -- Samaa TV
     }
     local currentChannel = list[index]
     for idx, c in ipairs(flatNews) do
@@ -615,8 +617,6 @@ function openMiniPlayer(list, index, categoryType)
         if controlsParent then controlsParent.setVisibility(View.GONE) end
       end
     end)
-    
-    -- یہاں سے فکس کیا گیا ہے: ہوم اسکرین پر جانے والا گلوبل ایکشن ہٹا دیا گیا ہے تاکہ کرنٹ ونڈو برقرار رہے
   end
 
   local btnMinimize = Button(service)
@@ -1044,23 +1044,25 @@ function showNewsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  layout.addView(createChannelButton(newsChannels[1], newsChannels, 1, "news"))
-  layout.addView(createChannelButton(newsChannels[2], newsChannels, 2, "news"))
+  -- نیوز مینو کے تمام بٹنز کو الفابیٹیکل آرڈر کے مطابق سیٹ کر دیا گیا ہے
+  layout.addView(createChannelButton(newsChannels[1], newsChannels, 1, "news")) -- Aaj News
+  layout.addView(createChannelButton(newsChannels[2], newsChannels, 2, "news")) -- Al Jazeera
   
   local btnAryCat = Button(service)
   btnAryCat.setText("ARY News")
   btnAryCat.setOnClickListener(View.OnClickListener({ onClick = function(v) showAryNewsMenu() end }))
   layout.addView(btnAryCat)
   
-  layout.addView(createChannelButton(newsChannels[3], newsChannels, 3, "news"))
+  layout.addView(createChannelButton(newsChannels[3], newsChannels, 3, "news")) -- City 42
+  layout.addView(createChannelButton(newsChannels[4], newsChannels, 4, "news")) -- Dunya News
   
   local btnGeoCat = Button(service)
   btnGeoCat.setText("Geo News")
   btnGeoCat.setOnClickListener(View.OnClickListener({ onClick = function(v) showGeoNewsMenu() end }))
   layout.addView(btnGeoCat)
   
-  layout.addView(createChannelButton(newsChannels[4], newsChannels, 4, "news"))
-  layout.addView(createChannelButton(newsChannels[5], newsChannels, 5, "news"))
+  layout.addView(createChannelButton(newsChannels[5], newsChannels, 5, "news")) -- PTV News
+  layout.addView(createChannelButton(newsChannels[6], newsChannels, 6, "news")) -- Samaa TV
   
   local btnBack = Button(service)
   btnBack.setText("Back to Main Menu")
