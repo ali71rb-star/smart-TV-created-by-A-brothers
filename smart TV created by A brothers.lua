@@ -62,6 +62,7 @@ import "android.webkit.WebView"
 import "android.webkit.WebViewClient"
 import "android.webkit.WebChromeClient"
 import "android.webkit.WebSettings"
+import "android.webkit.CookieManager" -- کوکیز مینیجر امپورٹ کیا گیا
 import "android.app.*"
 import "android.os.*"
 import "java.lang.Long"
@@ -159,10 +160,9 @@ local entertainmentChannels = {
   { name = "PTV Home", url = "https://tamashaweb.com/ptv-home" }
 }
 
--- نیوز چینلز الفابیٹیکل آرڈر (A to Z) میں ترتیب دیے گئے ہیں
 local newsChannels = {
   { name = "Aaj News", url = "https://www.tamashaweb.com/aaj-news-live" },
-  { name = "Al Jazeera", url = "https://tamashaweb.com/al-jazeera" }, -- درست لنک اور صحیح الفابیٹیکل پوزیشن
+  { name = "Al Jazeera", url = "https://tamashaweb.com/al-jazeera" }, 
   { name = "City 42", url = "https://www.tamashaweb.com/city-42-live" },
   { name = "Dunya News", url = "https://dunyanews.tv/live/" },
   { name = "PTV News", url = "https://tamashaweb.com/ptv-news" },
@@ -278,7 +278,6 @@ function openMiniPlayer(list, index, categoryType)
   end
 
   if categoryType == "news" or categoryType == "news_ary" or categoryType == "news_geo" then
-    -- فلیٹ لسٹ کو بھی الفابیٹیکل آرڈر کے مطابق ترتیب دیا گیا ہے
     local flatNews = {
       newsChannels[1],    -- Aaj News
       newsChannels[2],    -- Al Jazeera
@@ -346,6 +345,10 @@ function openMiniPlayer(list, index, categoryType)
   myWebView.setLayoutParams(FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
   myWebView.setBackgroundColor(0xFF000000)
   myWebView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
+  
+  -- [مسئلہ حل] اینڈرائڈ 16 اور سیمسنگ کے لیے ہارڈویئر ایکسیلریشن انجن زبردستی چالو کیا گیا
+  myWebView.setLayerType(View.LAYER_TYPE_HARDWARE, nil)
+  
   webContainer.addView(myWebView)
   _G.SmartTV_MyWebView = myWebView
   _G.SmartTV_WebContainer = webContainer
@@ -742,8 +745,18 @@ function openMiniPlayer(list, index, categoryType)
   webSettings.setMediaPlaybackRequiresUserGesture(false)
   webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
   
+  -- [مسئلہ حل] اینڈرائڈ 16 سیکیورٹی اسٹریمنگ فلیگز جو میڈیا بلاکنگ کو ختم کرتے ہیں
+  webSettings.setAllowContentAccess(true)
+  webSettings.setAllowFileAccess(true)
+  
   if Build.VERSION.SDK_INT >= 21 then
-    pcall(function() webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW) end)
+    pcall(function() 
+      webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW)
+      -- [مسئلہ حل] تھرڈ پارٹی اسٹریمنگ کوکیز کو زبردستی اجازت دی تاکہ ٹوکن لوڈ ہو سکیں
+      local cookieManager = CookieManager.getInstance()
+      cookieManager.setAcceptCookie(true)
+      cookieManager.setAcceptThirdPartyCookies(myWebView, true)
+    end)
   end
 
   myWebView.setWebChromeClient(luajava.override(WebChromeClient, {
@@ -843,7 +856,7 @@ function openMiniPlayer(list, index, categoryType)
     if targetClean:sub(-1) == "/" then targetClean = targetClean:sub(1, -2) end
     
     local function loop()
-      if not webInstance or not overlayView then return end
+      if (!webInstance or not overlayView) then return end
       if boundLoadId ~= currentLoadId then return end 
       
       attempts = attempts + 1
@@ -1044,7 +1057,6 @@ function showNewsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  -- نیوز مینو کے تمام بٹنز کو الفابیٹیکل آرڈر کے مطابق سیٹ کر دیا گیا ہے
   layout.addView(createChannelButton(newsChannels[1], newsChannels, 1, "news")) -- Aaj News
   layout.addView(createChannelButton(newsChannels[2], newsChannels, 2, "news")) -- Al Jazeera
   
@@ -1188,6 +1200,7 @@ function showAboutMenu()
   layout.setPadding(60, 40, 60, 40)
   sv.addView(layout)
   
+  -- 1. مین ٹائٹل ہیڈنگ
   local title = TextView(service)
   title.setText("About Smart TV Extension")
   title.setTextSize(18)
@@ -1195,6 +1208,7 @@ function showAboutMenu()
   title.setPadding(0, 10, 0, 20)
   layout.addView(title)
   
+  -- 2. لائیو ٹی وی او ٹی ٹی چینلز کیٹیگریز کا حصہ
   local infoTxt = TextView(service)
   infoTxt.setTextSize(14)
   infoTxt.setText("This extension is designed to provide seamless live television access categorization-wise:\n\n" ..
@@ -1202,11 +1216,39 @@ function showAboutMenu()
                  "2. Live News: Mainstream news networks directly streamed.\n" ..
                  "3. Religious: Holy streams including Makkah Live and spiritual content.\n" ..
                  "4. Live Sports: Realtime action of your favorite matches.\n" ..
-                 "5. Live Kids: Fun and educational content for children.\n\n" ..
-                 "Developed with accessibility compliance for effortless control.")
-  infoTxt.setPadding(0, 10, 0, 30)
+                 "5. Live Kids: Fun and educational content for children.\n\n")
+  infoTxt.setPadding(0, 10, 0, 10)
   layout.addView(infoTxt)
   
+  -- 3. ڈیویلپمنٹ کریڈٹس کی الگ ہیڈنگ اور سادہ تفصیلات
+  local creditsTitle = TextView(service)
+  creditsTitle.setText("DEVELOPMENT CREDITS")
+  creditsTitle.setTextSize(16)
+  creditsTitle.setPadding(0, 10, 0, 10)
+  layout.addView(creditsTitle)
+  
+  local creditsTxt = TextView(service)
+  creditsTxt.setTextSize(14)
+  creditsTxt.setText("Lead Conception and Architecture:\n" ..
+                     "Ahmad Ali\n" ..
+                     "Responsible for the core concept and initiating the main structure.\n\n" ..
+                     "Core Integration and Feature Engineering:\n" ..
+                     "Ali Gujjar\n" ..
+                     "Responsible for channel source integration and scaling playback features.\n\n" ..
+                     "Technical Optimization and Debugging:\n" ..
+                     "Azlan Tahir\n" ..
+                     "Responsible for fixing system bugs and optimizing code efficiency.\n\n" ..
+                     "Proudly developed with advanced accessibility compliance for smooth and intuitive interactions.")
+  creditsTxt.setPadding(0, 0, 0, 30)
+  layout.addView(creditsTxt)
+  
+  -- 4. کینسل کا بٹن (جو پہلے بیک ٹو سیٹنگ کی جگہ پر سویپ ہو کر آیا ہے)
+  local btnCancel = Button(service)
+  btnCancel.setText("Cancel")
+  btnCancel.setOnClickListener(View.OnClickListener({ onClick = function(v) dismissAllDialogs() showSettingsMenu() end }))
+  layout.addView(btnCancel)
+  
+  -- 5. ہیلپ اینڈ فیڈ بیک کا بٹن (جو اب نیچے ایا ہے)
   local btnHelp = Button(service)
   btnHelp.setText("Help & Feedback")
   btnHelp.setOnClickListener(View.OnClickListener({
@@ -1239,11 +1281,6 @@ function showAboutMenu()
   }))
   layout.addView(btnHelp)
   
-  local btnBack = Button(service)
-  btnBack.setText("Back to Settings")
-  btnBack.setOnClickListener(View.OnClickListener({ onClick = function(v) dismissAllDialogs() showSettingsMenu() end }))
-  layout.addView(btnBack)
-  
   aboutDialog = AlertDialog.Builder(service).setView(sv).create()
   safeShow(aboutDialog)
 end
@@ -1255,6 +1292,14 @@ function showSettingsMenu()
   layout.setOrientation(LinearLayout.VERTICAL)
   layout.setPadding(60, 40, 60, 40)
   sv.addView(layout)
+  
+  -- ایکسیسیبلٹی فوکس کے لیے سیٹنگز کا مخصوص ٹائٹل ہیڈر
+  local settingsTitle = TextView(service)
+  settingsTitle.setText("Smart TV Settings")
+  settingsTitle.setTextSize(18)
+  settingsTitle.setGravity(Gravity.CENTER)
+  settingsTitle.setPadding(0, 10, 0, 40)
+  layout.addView(settingsTitle)
   
   local btnAudioToggle = Button(service)
   btnAudioToggle.setText("Play TV in Audio Mode: " .. (_G.isAudioOnlyMode and "ON" or "OFF"))
