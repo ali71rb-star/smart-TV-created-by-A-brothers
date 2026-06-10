@@ -62,7 +62,7 @@ import "android.webkit.WebView"
 import "android.webkit.WebViewClient"
 import "android.webkit.WebChromeClient"
 import "android.webkit.WebSettings"
-import "android.webkit.CookieManager" -- کوکیز مینیجر امپورٹ کیا گیا
+import "android.webkit.CookieManager" 
 import "android.app.*"
 import "android.os.*"
 import "java.lang.Long"
@@ -72,6 +72,10 @@ import "android.net.Uri"
 import "android.widget.FrameLayout"
 import "android.graphics.drawable.ColorDrawable"
 import "android.content.DialogInterface" 
+import "java.util.HashMap"
+
+-- گلوبل جاوا ایرر فکس کرنے کے لیے
+java = { util = { HashMap = HashMap } }
 
 local mainDialog = nil
 local settingsDialog = nil
@@ -84,6 +88,9 @@ local sportsDialog = nil
 local kidsDialog = nil
 local favoritesDialog = nil 
 local aboutDialog = nil
+local addChannelDialog = nil
+local deleteChannelDialog = nil
+local customCatDialog = nil
 
 -- لوڈنگ اسکرین کے تصادم کو روکنے کے لیے ٹریکر
 local currentLoadId = 0
@@ -100,9 +107,9 @@ local controlsParent = _G.SmartTV_ControlsParent
 local webContainer = _G.SmartTV_WebContainer
 local portraitHeight = _G.SmartTV_PortraitHeight or 0
 
-local customViewContainer = nil
-local customViewCallback = nil
-local mCustomView = nil
+customViewContainer = nil
+customViewCallback = nil
+mCustomView = nil
 
 -- Preferences Configuration
 local pref = service.getSharedPreferences("SmartTV_Prefs", 0)
@@ -116,6 +123,35 @@ _G.currentVolumeMultiplier = 1.0
 _G.volIdx = 1
 _G.qualityIdx = 1
 _G.selectedQuality = "Auto"
+
+-- کسٹم کیٹیگریز ڈیٹا لوڈر لاجک (پابندی ختم کر دی گئی ہے)
+if not _G.customCategoriesList then
+  _G.customCategoriesList = {}
+  local catCount = pref.getInt("custom_cats_count", 0)
+  for i = 1, catCount do
+    local cName = pref.getString("custom_cat_name_" .. i, "")
+    local cParent = pref.getString("custom_cat_parent_" .. i, "")
+    if cName ~= "" and cParent ~= "" then
+      -- اب "Live music" یا کوئی بھی نام فلٹر نہیں ہوگا، سب لوڈ ہوں گے
+      table.insert(_G.customCategoriesList, {name = cName, parent = cParent})
+    end
+  end
+end
+
+local function saveCustomCategories()
+  local editor = pref.edit()
+  local oldCount = pref.getInt("custom_cats_count", 0)
+  for i = 1, oldCount do
+    editor.remove("custom_cat_name_" .. i)
+    editor.remove("custom_cat_parent_" .. i)
+  end
+  editor.putInt("custom_cats_count", #_G.customCategoriesList)
+  for i, c in ipairs(_G.customCategoriesList) do
+    editor.putString("custom_cat_name_" .. i, c.name)
+    editor.putString("custom_cat_parent_" .. i, c.parent)
+  end
+  editor.commit()
+end
 
 -- فیورٹ لسٹ لاجک
 if not _G.favoritesList then
@@ -142,15 +178,22 @@ local function saveFavorites()
     editor.putString("fav_name_" .. i, f.name)
     editor.putString("fav_url_" .. i, f.url)
   end
-  editor.apply()
+  editor.commit()
 end
 
 local volLevels = {"Normal", "2.0x", "3.0x", "4.0x", "5.0x", "6.0x"}
 local volMultipliers = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0}
 local qualityLevels = {"Auto", "1080p", "720p", "480p", "360p"}
 
--- لنکس شامل کر کے الفابیٹیکل (A to Z) ترتیب دے دی گئی ہے
-local entertainmentChannels = {
+-- الفابیٹیکل آرڈر میں ترتیب دینے کا فنکشن
+local function sortChannelsAlphabetically(channelList)
+  table.sort(channelList, function(a, b)
+    return a.name:lower() < b.name:lower()
+  end)
+end
+
+-- بنیادی ہارڈکوڈڈ چینل لسٹیں (بیس ڈیٹا)
+local baseEntertainmentChannels = {
   { name = "ARY Digital", url = "https://tamashaweb.com/ary-digital-live" },
   { name = "ARY Zindagi", url = "https://www.tamashaweb.com/ary-zindagi-live" },
   { name = "Geo Entertainment", url = "https://harpalgeo.tv/live" },
@@ -162,8 +205,7 @@ local entertainmentChannels = {
   { name = "PTV Home", url = "https://tamashaweb.com/ptv-home" }
 }
 
--- لنکس شامل کر کے الفابیٹیکل (A to Z) ترتیب دے دی گئی ہے
-local newsChannels = {
+local baseNewsChannels = {
   { name = "Aaj News", url = "https://www.tamashaweb.com/aaj-news-live" },
   { name = "Al Jazeera", url = "https://tamashaweb.com/al-jazeera" }, 
   { name = "City 42", url = "https://www.tamashaweb.com/city-42-live" },
@@ -173,33 +215,155 @@ local newsChannels = {
   { name = "Samaa TV", url = "https://tamashaweb.com/samaa-tv-live" }
 }
 
-local aryNewsChannels = {
+-- کسٹم چینلز کو لوڈ کرنا (یہاں سے بھی پابندی ختم)
+if not _G.customChannelsList then
+  _G.customChannelsList = {}
+  local cCount = pref.getInt("custom_channels_count", 0)
+  local seenNames = {}
+  for i = 1, cCount do
+    local name = pref.getString("custom_ch_name_" .. i, "")
+    local url = pref.getString("custom_ch_url_" .. i, "")
+    local cat = pref.getString("custom_ch_cat_" .. i, "")
+    if name ~= "" and url ~= "" and cat ~= "" then
+      -- اب "Live music" کیٹیگری کا کوئی بھی چینل بلاک نہیں ہوگا
+      seenNames[name:lower()] = {name = name, url = url, category = cat}
+    end
+  end
+  for _, item in pairs(seenNames) do
+    table.insert(_G.customChannelsList, item)
+  end
+end
+
+local baseAryNewsChannels = {
   { name = "ARY News 1", url = "https://tamashaweb.com/ary-news" },
   { name = "ARY News 2", url = "http://live.arynews.tv/pk/" }
 }
 
-local geoNewsChannels = {
+local baseGeoNewsChannels = {
   { name = "Geo News 1", url = "https://tamashaweb.com/geo-news-live" },
   { name = "Geo News 2", url = "https://live.geo.tv/" },
   { name = "Geo News 3", url = "https://live.geo.tv/stream2" }
 }
 
-local religiousChannels = {
+local baseReligiousChannels = {
   { name = "ARY QTV", url = "https://live.aryqtv.tv/" },
   { name = "Madani Channel", url = "https://tamashaweb.com/madani-channel-live" },
   { name = "Paigham TV", url = "https://tamashaweb.com/paigham-tv" },
   { name = "Saudi Quran Makkah TV", url = "https://tamashaweb.com/saudi-quran-makk/ah-tv-hd-live" }
 }
 
-local sportsChannels = {
+local baseSportsChannels = {
   { name = "Geo Super", url = "https://www.geosuper.tv/live" },
   { name = "PTV Sports", url = "https://tamashaweb.com/ptv-sports" }
 }
 
-local kidsChannels = {
+local baseKidsChannels = {
   { name = "Baby TV", url = "https://tamashaweb.com/baby-tv-live" },
   { name = "Cartoon Network", url = "https://pakistan-tv.vercel.app/channels/cartoon-network-live" }
 }
+
+-- ایکٹو رن ٹائم لسٹیں جو مینو استعمال کریں گے
+local entertainmentChannels = {}
+local newsChannels = {}
+local aryNewsChannels = {}
+local geoNewsChannels = {}
+local religiousChannels = {}
+local sportsChannels = {}
+local kidsChannels = {}
+_G.customCategoryChannels = {}
+
+local function saveCustomChannels()
+  local editor = pref.edit()
+  local oldCCount = pref.getInt("custom_channels_count", 0)
+  for i = 1, oldCCount do
+    editor.remove("custom_ch_name_" .. i)
+    editor.remove("custom_ch_url_" .. i)
+    editor.remove("custom_ch_cat_" .. i)
+  end
+  editor.putInt("custom_channels_count", #_G.customChannelsList)
+  for i, c in ipairs(_G.customChannelsList) do
+    editor.putString("custom_ch_name_" .. i, c.name)
+    editor.putString("custom_ch_url_" .. i, c.url)
+    editor.putString("custom_ch_cat_" .. i, c.category)
+  end
+  editor.commit()
+end
+
+-- تمام چینلز کو رینڈر کرنے اور لسٹیں سنک کرنے کا مین فنکشن
+local function rebuildActiveChannels()
+  entertainmentChannels = {}
+  for _, v in ipairs(baseEntertainmentChannels) do table.insert(entertainmentChannels, {name=v.name, url=v.url}) end
+  newsChannels = {}
+  for _, v in ipairs(baseNewsChannels) do table.insert(newsChannels, {name=v.name, url=v.url}) end
+  aryNewsChannels = {}
+  for _, v in ipairs(baseAryNewsChannels) do table.insert(aryNewsChannels, {name=v.name, url=v.url}) end
+  geoNewsChannels = {}
+  for _, v in ipairs(baseGeoNewsChannels) do table.insert(geoNewsChannels, {name=v.name, url=v.url}) end
+  religiousChannels = {}
+  for _, v in ipairs(baseReligiousChannels) do table.insert(religiousChannels, {name=v.name, url=v.url}) end
+  sportsChannels = {}
+  for _, v in ipairs(baseSportsChannels) do table.insert(sportsChannels, {name=v.name, url=v.url}) end
+  kidsChannels = {}
+  for _, v in ipairs(baseKidsChannels) do table.insert(kidsChannels, {name=v.name, url=v.url}) end
+
+  _G.customCategoryChannels = {}
+  for _, cat in ipairs(_G.customCategoriesList) do
+    _G.customCategoryChannels[cat.name] = {}
+  end
+
+  local function removeNameFromAllLists(name)
+    local lists = {entertainmentChannels, newsChannels, aryNewsChannels, geoNewsChannels, religiousChannels, sportsChannels, kidsChannels}
+    for _, list in ipairs(lists) do
+      for i = #list, 1, -1 do
+        if list[i].name:lower() == name:lower() then table.remove(list, i) end
+      end
+    end
+    for catName, list in pairs(_G.customCategoryChannels) do
+      for i = #list, 1, -1 do
+        if list[i].name:lower() == name:lower() then table.remove(list, i) end
+      end
+    end
+  end
+
+  for _, c in ipairs(_G.customChannelsList) do
+    removeNameFromAllLists(c.name) 
+    
+    local newChannel = {name = c.name, url = c.url}
+    if c.category == "Entertainment" then
+      table.insert(entertainmentChannels, newChannel)
+    elseif c.category == "News (Main)" then
+      table.insert(newsChannels, newChannel)
+    elseif c.category == "ARY News" then
+      table.insert(aryNewsChannels, newChannel)
+    elseif c.category == "Geo News" then
+      table.insert(geoNewsChannels, newChannel)
+    elseif c.category == "Religious" then
+      table.insert(religiousChannels, newChannel)
+    elseif c.category == "Sports" then
+      table.insert(sportsChannels, newChannel)
+    elseif c.category == "Kids" then
+      table.insert(kidsChannels, newChannel)
+    else
+      if _G.customCategoryChannels[c.category] then
+        table.insert(_G.customCategoryChannels[c.category], newChannel)
+      end
+    end
+  end
+
+  sortChannelsAlphabetically(entertainmentChannels)
+  sortChannelsAlphabetically(newsChannels)
+  sortChannelsAlphabetically(aryNewsChannels)
+  sortChannelsAlphabetically(geoNewsChannels)
+  sortChannelsAlphabetically(religiousChannels)
+  sortChannelsAlphabetically(sportsChannels)
+  sortChannelsAlphabetically(kidsChannels)
+  for catName, chList in pairs(_G.customCategoryChannels) do
+    sortChannelsAlphabetically(chList)
+  end
+end
+
+saveCustomChannels()
+rebuildActiveChannels()
 
 function dismissAllDialogs()
   if mainDialog then pcall(function() mainDialog.dismiss() end) mainDialog = nil end
@@ -213,6 +377,9 @@ function dismissAllDialogs()
   if kidsDialog then pcall(function() kidsDialog.dismiss() end) kidsDialog = nil end
   if favoritesDialog then pcall(function() favoritesDialog.dismiss() end) favoritesDialog = nil end
   if aboutDialog then pcall(function() aboutDialog.dismiss() end) aboutDialog = nil end
+  if addChannelDialog then pcall(function() addChannelDialog.dismiss() end) addChannelDialog = nil end
+  if deleteChannelDialog then pcall(function() deleteChannelDialog.dismiss() end) deleteChannelDialog = nil end
+  if customCatDialog then pcall(function() customCatDialog.dismiss() end) customCatDialog = nil end
 end
 
 function speakText(text)
@@ -240,7 +407,6 @@ function closeExtension()
     playerDialog = nil
     _G.SmartTV_PlayerDialog = nil
   end
-  
   pcall(function()
     Toast.makeText(service, "Extension Successfully Closed", Toast.LENGTH_SHORT).show()
   end)
@@ -281,28 +447,14 @@ function openMiniPlayer(list, index, categoryType)
     _G.SmartTV_IsPlayerMinimized = false
   end
 
-  if categoryType == "news" or categoryType == "news_ary" or categoryType == "news_geo" then
-    local flatNews = {
-      newsChannels[1],    -- Aaj News
-      newsChannels[2],    -- Al Jazeera
-      aryNewsChannels[1], -- ARY News 1
-      aryNewsChannels[2], -- ARY News 2
-      newsChannels[3],    -- City 42
-      newsChannels[4],    -- Dunya News
-      geoNewsChannels[1], -- Geo News 1
-      geoNewsChannels[2], -- Geo News 2
-      geoNewsChannels[3], -- Geo News 3
-      newsChannels[5],    -- KTN News
-      newsChannels[6],    -- PTV News
-      newsChannels[7]     -- Samaa TV
-    }
-    local currentChannel = list[index]
-    for idx, c in ipairs(flatNews) do
-      if c.url == currentChannel.url then
-        index = idx
-        break
-      end
-    end
+  local isCustomCat = false
+  if categoryType and type(categoryType) == "string" and #categoryType >= 7 and categoryType:sub(1, 7) == "custom_" then
+    isCustomCat = true
+  end
+
+  if categoryType == "news" or categoryType == "news_ary" or categoryType == "news_geo" or isCustomCat then
+    local flatNews = {}
+    for _, c in ipairs(list) do table.insert(flatNews, c) end
     list = flatNews
   end
 
@@ -346,17 +498,13 @@ function openMiniPlayer(list, index, categoryType)
   local webParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, currentHeight)
   webContainer.setLayoutParams(webParams)
 
-  -- [مسئلہ حل] وائی فائی بفرنگ کے لیے اسٹرکچر چھیڑے بغیر ہارڈویئر رینڈر ڈرا متحرک کیا گیا
   pcall(function() WebView.enableSlowWholeDocumentDraw() end)
   
   myWebView = WebView(service)
   myWebView.setLayoutParams(FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
   myWebView.setBackgroundColor(0xFF000000)
   myWebView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS)
-  
-  -- اینڈرائڈ 16 اور سیمسنگ کے لیے ہارڈویئر ایکسیلریشن انجن زبردستی چالو کیا گیا
   myWebView.setLayerType(View.LAYER_TYPE_HARDWARE, nil)
-  
   webContainer.addView(myWebView)
   _G.SmartTV_MyWebView = myWebView
   _G.SmartTV_WebContainer = webContainer
@@ -369,7 +517,6 @@ function openMiniPlayer(list, index, categoryType)
   overlay.setTextSize(18)
   overlay.setText("Channel Loading...")
   webContainer.addView(overlay)
-
   layout.addView(webContainer)
 
   controlsParent = LinearLayout(service)
@@ -451,12 +598,7 @@ function openMiniPlayer(list, index, categoryType)
   btnFullScreen.setText(isFullScreen and "Exit Full Screen" or "Full Screen")
   btnFullScreen.setTextSize(11)
   btnFullScreen.setLayoutParams(btnParams)
-  
-  if _G.isAudioOnlyMode then
-    btnFullScreen.setVisibility(View.GONE)
-  else
-    btnFullScreen.setVisibility(View.VISIBLE)
-  end
+  btnFullScreen.setVisibility(_G.isAudioOnlyMode and View.GONE or View.VISIBLE)
 
   btnFullScreen.setOnClickListener(View.OnClickListener({
     onClick = function(v) toggleFullScreenMode() end
@@ -511,11 +653,7 @@ function openMiniPlayer(list, index, categoryType)
   end
 
   local function syncFavText()
-    if checkIsFav() then 
-      btnFav.setText("Remove from Favorites") 
-    else 
-      btnFav.setText("Add to Favorites") 
-    end
+    btnFav.setText(checkIsFav() and "Remove from Favorites" or "Add to Favorites")
   end
   syncFavText()
 
@@ -524,15 +662,13 @@ function openMiniPlayer(list, index, categoryType)
       local favIdx = checkIsFav()
       if favIdx then
         table.remove(_G.favoritesList, favIdx)
-        saveFavorites() 
-        syncFavText()
         speakText("Removed from favorites")
       else
         table.insert(_G.favoritesList, {name = channel.name, url = channel.url})
-        saveFavorites() 
-        syncFavText()
         speakText("Added to favorites")
       end
+      saveFavorites() 
+      syncFavText()
     end
   }))
   row2.addView(btnFav)
@@ -552,26 +688,10 @@ function openMiniPlayer(list, index, categoryType)
         )
         txtNowPlaying.setVisibility(View.GONE)
         controlsParent.setVisibility(View.GONE)
-        
-        local webParamsFS = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
-        webContainer.setLayoutParams(webParamsFS)
+        webContainer.setLayoutParams(LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT))
         isFullScreen = true
         _G.SmartTV_IsFullScreen = true
         btnFullScreen.setText("Exit Full Screen")
-        
-        local fsJS = [[
-          (function() {
-            var elements = document.querySelectorAll('button, div, a, i, span');
-            for(var i = 0; i < elements.length; i++) {
-              var el = elements[i];
-              var text = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase();
-              if (text.indexOf('enter full screen') !== -1 || text.indexOf('shortcut f') !== -1) {
-                try { el.click(); break; } catch(e){}
-              }
-            }
-          })();
-        ]]
-        myWebView.evaluateJavascript(fsJS, nil)
       else
         lp.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         win.setAttributes(lp)
@@ -579,53 +699,34 @@ function openMiniPlayer(list, index, categoryType)
         win.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE)
         txtNowPlaying.setVisibility(View.VISIBLE)
         controlsParent.setVisibility(View.VISIBLE)
-        
-        local webParamsPT = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, portraitHeight)
-        webContainer.setLayoutParams(webParamsPT)
+        webContainer.setLayoutParams(LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, portraitHeight))
         isFullScreen = false
         _G.SmartTV_IsFullScreen = false
         btnFullScreen.setText("Full Screen")
-        
-        local exitJS = [[
-          (function() {
-            var elements = document.querySelectorAll('button, div, a, i, span');
-            for(var i = 0; i < elements.length; i++) {
-              var el = elements[i];
-              var text = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase();
-              if (text.indexOf('exit full screen') !== -1 || text.indexOf('shortcut f') !== -1) {
-                try { el.click(); break; } catch(e){}
-              }
-            }
-          })();
-        ]]
-        myWebView.evaluateJavascript(exitJS, nil)
       end
     end)
   end
 
+  -- یونیورسل منیمائز لوجک
   local handleMinimizeAction = function()
     if not _G.isBackgroundPlayEnabled then
       speakText("Background play is turned off in settings")
-      Toast.makeText(service, "Background Play is Disabled!", Toast.LENGTH_SHORT).show()
       return
     end
-
     _G.SmartTV_IsPlayerMinimized = true
     speakText("Player minimized to background")
-    
+    dismissAllDialogs() 
     pcall(function()
       if playerDialog then
         local win = playerDialog.getWindow()
         win.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
         win.setBackgroundDrawable(ColorDrawable(0x00000000)) 
-        
-        if mainContainer then mainContainer.setBackgroundColor(0x00000000) end
-        if layout then layout.setBackgroundColor(0x00000000) end
-        if webContainer then webContainer.setBackgroundColor(0x00000000) end
-        if myWebView then myWebView.setBackgroundColor(0x00000000) end
-        
-        if txtNowPlaying then txtNowPlaying.setVisibility(View.GONE) end
-        if controlsParent then controlsParent.setVisibility(View.GONE) end
+        mainContainer.setBackgroundColor(0x00000000)
+        layout.setBackgroundColor(0x00000000)
+        webContainer.setBackgroundColor(0x00000000)
+        myWebView.setBackgroundColor(0x00000000)
+        txtNowPlaying.setVisibility(View.GONE)
+        controlsParent.setVisibility(View.GONE)
       end
     end)
   end
@@ -641,19 +742,14 @@ function openMiniPlayer(list, index, categoryType)
 
   local goBackToMenu = function()
     _G.SmartTV_IsPlayerMinimized = false
-    if myWebView then 
-      pcall(function() 
-        myWebView.stopLoading()
-        myWebView.loadUrl("about:blank")
-      end) 
-    end
+    if myWebView then pcall(function() myWebView.stopLoading() myWebView.loadUrl("about:blank") end) end
     pcall(function()
       local win = playerDialog.getWindow()
       local lp = win.getAttributes()
       lp.screenOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
       win.setAttributes(lp)
     end)
-    if isFullScreen then isFullScreen = false end
+    isFullScreen = false
     _G.SmartTV_IsFullScreen = false
     if playerDialog then playerDialog.dismiss() playerDialog = nil end
     _G.SmartTV_PlayerDialog = nil
@@ -666,6 +762,7 @@ function openMiniPlayer(list, index, categoryType)
     elseif categoryType == "religious" then showReligiousMenu()
     elseif categoryType == "sports" then showSportsMenu()
     elseif categoryType == "favorites" then showFavoritesMenu()
+    elseif isCustomCat then showCustomCategoryMenu(categoryType:sub(8))
     else showTvMenu() end
   end
 
@@ -682,11 +779,7 @@ function openMiniPlayer(list, index, categoryType)
   btnExitPlayer.setText("Exit")
   btnExitPlayer.setTextSize(11)
   btnExitPlayer.setLayoutParams(btnParams)
-  btnExitPlayer.setOnClickListener(View.OnClickListener({
-    onClick = function(v)
-      closeExtension()
-    end
-  }))
+  btnExitPlayer.setOnClickListener(View.OnClickListener({ onClick = function(v) closeExtension() end }))
   row2.addView(btnExitPlayer)
 
   controlsParent.addView(row2)
@@ -700,46 +793,7 @@ function openMiniPlayer(list, index, categoryType)
   playerDialog.setOnKeyListener(luajava.createProxy("android.content.DialogInterface$OnKeyListener", {
     onKey = function(dialog, keyCode, event)
       if keyCode == KeyEvent.KEYCODE_BACK and event.getAction() == KeyEvent.ACTION_UP then
-        if _G.isBackgroundPlayEnabled then
-          handleMinimizeAction() 
-          return true 
-        else
-          goBackToMenu()
-          return true
-        end
-      end
-      return false
-    end
-  }))
-
-  local startX, startY = 0, 0
-  myWebView.setOnTouchListener(View.OnTouchListener({
-    onTouch = function(v, event)
-      if not isFullScreen then return false end
-      local action = event.getAction()
-      if action == MotionEvent.ACTION_DOWN then
-        startX = event.getX()
-        startY = event.getY()
-        return true
-      elseif action == MotionEvent.ACTION_UP then
-        local endX = event.getX()
-        local endY = event.getY()
-        local deltaX = endX - startX
-        local deltaY = endY - startY
-
-        if math.abs(deltaX) > math.abs(deltaY) then
-          if deltaX > 150 then
-            if index < #list then changeChannel(index + 1) else speakText("Last channel") end
-          elseif deltaX < -150 then
-            if index > 1 then changeChannel(index - 1) else speakText("First channel") end
-          end
-        else
-          if deltaY < -150 then
-            togglePlayPause()
-          elseif deltaY > 150 then
-            goBackToMenu()
-          end
-        end
+        if _G.isBackgroundPlayEnabled then handleMinimizeAction() else goBackToMenu() end
         return true
       end
       return false
@@ -751,31 +805,11 @@ function openMiniPlayer(list, index, categoryType)
   webSettings.setDomStorageEnabled(true)
   webSettings.setDatabaseEnabled(true)
   webSettings.setMediaPlaybackRequiresUserGesture(false)
-  webSettings.setUserAgentString("Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
-  
-  -- اینڈرائڈ 16 سیکیورٹی اسٹریمنگ فلیگز جو میڈیا بلاکنگ کو ختم کرتے ہیں
-  webSettings.setAllowContentAccess(true)
-  webSettings.setAllowFileAccess(true)
-  
-  -- [مسئلہ حل] وائی فائی نیٹ ورک پر آئی پی بلاکنگ روکنے کے لیے جیو-لوکیشن چیک ڈس ایبل کیا گیا
-  webSettings.setGeolocationEnabled(false)
-
-  if Build.VERSION.SDK_INT >= 21 then
-    pcall(function() 
-      webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW)
-      -- تھرڈ پارٹی اسٹریمنگ کوکیز کو زبردستی اجازت دی تاکہ ٹوکن لوڈ ہو سکیں
-      local cookieManager = CookieManager.getInstance()
-      cookieManager.setAcceptCookie(true)
-      cookieManager.setAcceptThirdPartyCookies(myWebView, true)
-    end)
-  end
+  webSettings.setUserAgentString("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
   myWebView.setWebChromeClient(luajava.override(WebChromeClient, {
     onShowCustomView = function(super, view, callback)
-      if mCustomView then
-        callback.onCustomViewHidden()
-        return
-      end
+      if mCustomView then callback.onCustomViewHidden() return end
       mCustomView = view
       customViewContainer.addView(mCustomView)
       customViewContainer.setVisibility(View.VISIBLE)
@@ -804,9 +838,7 @@ function openMiniPlayer(list, index, categoryType)
               }
           }
           if (!video) return;
-
           if(document.title !== "TV") { document.title = "TV"; }
-
           var styleId = 'indestructible-tv-isolation';
           var style = document.getElementById(styleId);
           if (!style) {
@@ -814,108 +846,27 @@ function openMiniPlayer(list, index, categoryType)
               style.id = styleId;
               document.head.appendChild(style);
           }
-          style.innerHTML = `
-              video {
-                  display: block !important;
-                  visibility: visible !important;
-                  position: fixed !important;
-                  top: 0 !important;
-                  left: 0 !important;
-                  width: 100% !important;
-                  height: 100% !important;
-                  z-index: 2147483647 !important;
-                  object-fit: contain !important;
-                  background: #000000 !important;
-              }
-          `;
-          
-          var curr = video.parentElement;
-          while (curr && curr !== document.body) {
-              curr.style.setProperty('overflow', 'visible', 'important');
-              curr.style.setProperty('transform', 'none', 'important');
-              curr.style.setProperty('filter', 'none', 'important');
-              curr.style.setProperty('clip', 'auto', 'important');
-              curr = curr.parentElement;
-          }
-
-          if (video.muted) {
-              video.muted = false;
-              var elements = document.querySelectorAll('button, div, a, i, span');
-              for(var i = 0; i < elements.length; i++) {
-                  var text = (elements[i].innerText || elements[i].getAttribute('aria-label') || '').toLowerCase();
-                  if (text.indexOf('unmute') !== -1) {
-                      try { elements[i].click(); } catch(e){}
-                  }
-              }
-          }
-          if (video.paused && !window.isUserPaused) {
-              try { video.play(); } catch(e){}
-          }
+          style.innerHTML = `video { display: block !important; visibility: visible !important; position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; z-index: 2147483647 !important; object-fit: contain !important; background: #000000 !important; }`;
       };
-
       forcePureVideoIsolation();
-      if (!window.cleanTvIndestructibleInterval) {
-          window.cleanTvIndestructibleInterval = setInterval(forcePureVideoIsolation, 150);
-      }
+      if (!window.cleanTvIndestructibleInterval) { window.cleanTvIndestructibleInterval = setInterval(forcePureVideoIsolation, 150); }
   })();]]
 
-  local function startVideoPollingCheck(overlayView, webInstance, boundLoadId, channelUrl)
+  local function startVideoPollingCheck(overlayView, webInstance, boundLoadId)
     local attempts = 0
-    local maxAttempts = 50 
-    
-    local targetClean = channelUrl:gsub("https?://", ""):gsub("www%.", "")
-    if targetClean:sub(-1) == "/" then targetClean = targetClean:sub(1, -2) end
-    
     local function loop()
-      if (!webInstance or not overlayView) then return end
-      if boundLoadId ~= currentLoadId then return end 
-      
+      if (not webInstance or not overlayView or boundLoadId ~= currentLoadId) then return end
       attempts = attempts + 1
-      
-      local jsCheck = [[
-        (function() {
-          var current = window.location.href.replace(/^https?:\/\//, '').replace(/^www\./, '');
-          var target = "]] .. targetClean .. [[";
-          if (current.indexOf(target) === -1 && target !== "about:blank") {
-            return "WRONG_PAGE";
-          }
-          var v = document.querySelector('video');
-          if (!v) {
-            var iframes = document.querySelectorAll('iframe');
-            for (var i = 0; i < iframes.length; i++) {
-              try {
-                var doc = iframes[i].contentDocument || iframes[i].contentWindow.document;
-                v = doc.querySelector('video');
-                if (v) break;
-              } catch(e) {}
-            }
-          }
-          if (v) {
-            if (v.paused && !window.isUserPaused) { try { v.play(); } catch(e){} }
-            if (v.currentTime > 0 || v.readyState >= 2) {
-              return "READY_PLAYING";
-            }
-          }
-          return "STILL_LOADING";
-        })();
-      ]]
-
-      webInstance.evaluateJavascript(jsCheck, luajava.createProxy("android.webkit.ValueCallback", {
+      webInstance.evaluateJavascript([[(function() { var v = document.querySelector('video'); return (v && (v.currentTime > 0 || v.readyState >= 2)) ? "READY" : "LOADING"; })();]], luajava.createProxy("android.webkit.ValueCallback", {
         onReceiveValue = function(res)
-          if boundLoadId ~= currentLoadId then return end 
-          
-          local isReady = (res and (res:find("READY_PLAYING") or res == '"READY_PLAYING"'))
-          
-          if isReady or attempts >= maxAttempts then
+          if boundLoadId ~= currentLoadId then return end
+          if res and (res:find("READY") or res == '"READY"') or attempts >= 50 then
             webInstance.evaluateJavascript(cleanJS, nil)
-            pcall(function() overlayView.setVisibility(View.GONE) end) 
-            
-            if _G.isChannelLoading then
-              _G.isChannelLoading = false
-            end
+            overlayView.setVisibility(View.GONE)
+            _G.isChannelLoading = false
           else
-            webInstance.evaluateJavascript(cleanJS, nil) 
-            service.handler.postDelayed(Runnable({run = loop}), Long(200)) 
+            webInstance.evaluateJavascript(cleanJS, nil)
+            service.handler.postDelayed(Runnable({run = loop}), Long(200))
           end
         end
       }))
@@ -923,43 +874,31 @@ function openMiniPlayer(list, index, categoryType)
     loop()
   end
 
-  myWebView.setWebViewClient(luajava.override(WebViewClient, {
-    onPageStarted = function(super, view, url, favicon) end,
-    onPageFinished = function(super, view, url)
-      view.evaluateJavascript(cleanJS, nil)
-    end
-  }))
-
   changeChannel = function(newIndex)
-    pcall(function() myWebView.stopLoading() end) 
-    currentLoadId = currentLoadId + 1 
-    _G.isChannelLoading = true 
-    
+    pcall(function() myWebView.stopLoading() end)
+    currentLoadId = currentLoadId + 1
+    _G.isChannelLoading = true
     index = newIndex
     channel = list[index]
     txtNowPlaying.setText("Now Playing: " .. channel.name)
     btnPlayPause.setText("Pause")
     syncFavText()
-    
     speakText("Now playing " .. channel.name)
-    pcall(function() 
-      overlay.setText("Channel Loading...")
-      overlay.setVisibility(View.VISIBLE) 
-    end) 
-    myWebView.loadUrl(channel.url)
+    overlay.setText("Channel Loading...")
+    overlay.setVisibility(View.VISIBLE)
     
-    startVideoPollingCheck(overlay, myWebView, currentLoadId, channel.url)
+    local extraHeaders = java.util.HashMap()
+    extraHeaders.put("Referer", "https://tamashaweb.com/")
+    myWebView.loadUrl(channel.url, extraHeaders)
+    startVideoPollingCheck(overlay, myWebView, currentLoadId)
   end
 
   currentLoadId = currentLoadId + 1
-  _G.isChannelLoading = true 
-  pcall(function() 
-    overlay.setText("Channel Loading...")
-    overlay.setVisibility(View.VISIBLE) 
-  end) 
-  myWebView.loadUrl(channel.url)
-  
-  startVideoPollingCheck(overlay, myWebView, currentLoadId, channel.url)
+  _G.isChannelLoading = true
+  local extraHeaders = java.util.HashMap()
+  extraHeaders.put("Referer", "https://tamashaweb.com/")
+  myWebView.loadUrl(channel.url, extraHeaders)
+  startVideoPollingCheck(overlay, myWebView, currentLoadId)
   safeShow(playerDialog)
 end
 
@@ -970,6 +909,49 @@ function createChannelButton(ch, list, i, categoryType)
     onClick = function(v) dismissAllDialogs() openMiniPlayer(list, i, categoryType) end
   }))
   return btn
+end
+
+-- کسٹم رن ٹائم کیٹیگری مینو بنانے کا ڈائنامک فنکشن
+function showCustomCategoryMenu(catName)
+  dismissAllDialogs()
+  local sv = ScrollView(service)
+  local layout = LinearLayout(service)
+  layout.setOrientation(LinearLayout.VERTICAL)
+  layout.setPadding(60, 40, 60, 40)
+  sv.addView(layout)
+  
+  local title = TextView(service)
+  title.setText(catName)
+  title.setTextSize(18)
+  title.setGravity(Gravity.CENTER)
+  title.setPadding(0, 10, 0, 30)
+  layout.addView(title)
+  
+  local chList = _G.customCategoryChannels[catName] or {}
+  for i, ch in ipairs(chList) do 
+    layout.addView(createChannelButton(ch, chList, i, "custom_" .. catName)) 
+  end
+  
+  local parentMenu = "Main Menu"
+  for _, cat in ipairs(_G.customCategoriesList) do
+    if cat.name == catName then parentMenu = cat.parent break end
+  end
+  
+  local btnBack = Button(service)
+  btnBack.setText("Back")
+  btnBack.setOnClickListener(View.OnClickListener({ onClick = function(v) 
+    dismissAllDialogs() 
+    if parentMenu == "News (Main)" then showNewsMenu()
+    elseif parentMenu == "Entertainment" then showChannelsMenu()
+    elseif parentMenu == "Kids" then showKidsMenu()
+    elseif parentMenu == "Religious" then showReligiousMenu()
+    elseif parentMenu == "Sports" then showSportsMenu()
+    else showTvMenu() end
+  end }))
+  layout.addView(btnBack)
+  
+  customCatDialog = AlertDialog.Builder(service).setView(sv).create()
+  safeShow(customCatDialog)
 end
 
 function showFavoritesMenu()
@@ -987,9 +969,7 @@ function showFavoritesMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  for i, ch in ipairs(_G.favoritesList) do 
-    layout.addView(createChannelButton(ch, _G.favoritesList, i, "favorites")) 
-  end
+  for i, ch in ipairs(_G.favoritesList) do layout.addView(createChannelButton(ch, _G.favoritesList, i, "favorites")) end
   
   local btnBack = Button(service)
   btnBack.setText("Back to Main Menu")
@@ -1014,9 +994,7 @@ function showAryNewsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  for i, ch in ipairs(aryNewsChannels) do 
-    layout.addView(createChannelButton(ch, aryNewsChannels, i, "news_ary")) 
-  end
+  for i, ch in ipairs(aryNewsChannels) do layout.addView(createChannelButton(ch, aryNewsChannels, i, "news_ary")) end
   
   local btnBack = Button(service)
   btnBack.setText("Back to News Menu")
@@ -1041,9 +1019,7 @@ function showGeoNewsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  for i, ch in ipairs(geoNewsChannels) do 
-    layout.addView(createChannelButton(ch, geoNewsChannels, i, "news_geo")) 
-  end
+  for i, ch in ipairs(geoNewsChannels) do layout.addView(createChannelButton(ch, geoNewsChannels, i, "news_geo")) end
   
   local btnBack = Button(service)
   btnBack.setText("Back to News Menu")
@@ -1068,25 +1044,31 @@ function showNewsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  layout.addView(createChannelButton(newsChannels[1], newsChannels, 1, "news")) -- Aaj News
-  layout.addView(createChannelButton(newsChannels[2], newsChannels, 2, "news")) -- Al Jazeera
+  local displayList = {}
+  for i, ch in ipairs(newsChannels) do
+    table.insert(displayList, { isSub = false, name = ch.name, url = ch.url, idx = i })
+  end
+  table.insert(displayList, { isSub = true, name = "ARY News", action = showAryNewsMenu })
+  table.insert(displayList, { isSub = true, name = "Geo News", action = showGeoNewsMenu })
   
-  local btnAryCat = Button(service)
-  btnAryCat.setText("ARY News")
-  btnAryCat.setOnClickListener(View.OnClickListener({ onClick = function(v) showAryNewsMenu() end }))
-  layout.addView(btnAryCat)
+  for _, cat in ipairs(_G.customCategoriesList) do
+    if cat.parent == "News (Main)" then
+      table.insert(displayList, { isSub = true, name = cat.name, action = function() showCustomCategoryMenu(cat.name) end })
+    end
+  end
   
-  layout.addView(createChannelButton(newsChannels[3], newsChannels, 3, "news")) -- City 42
-  layout.addView(createChannelButton(newsChannels[4], newsChannels, 4, "news")) -- Dunya News
+  table.sort(displayList, function(a, b) return a.name:lower() < b.name:lower() end)
   
-  local btnGeoCat = Button(service)
-  btnGeoCat.setText("Geo News")
-  btnGeoCat.setOnClickListener(View.OnClickListener({ onClick = function(v) showGeoNewsMenu() end }))
-  layout.addView(btnGeoCat)
-  
-  layout.addView(createChannelButton(newsChannels[5], newsChannels, 5, "news")) -- KTN News
-  layout.addView(createChannelButton(newsChannels[6], newsChannels, 6, "news")) -- PTV News
-  layout.addView(createChannelButton(newsChannels[7], newsChannels, 7, "news")) -- Samaa TV
+  for _, item in ipairs(displayList) do
+    if item.isSub then
+      local btnSub = Button(service)
+      btnSub.setText(item.name)
+      btnSub.setOnClickListener(View.OnClickListener({ onClick = function(v) item.action() end }))
+      layout.addView(btnSub)
+    else
+      layout.addView(createChannelButton({name = item.name, url = item.url}, newsChannels, item.idx, "news"))
+    end
+  end
   
   local btnBack = Button(service)
   btnBack.setText("Back to Main Menu")
@@ -1111,8 +1093,26 @@ function showChannelsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  for i, ch in ipairs(entertainmentChannels) do 
-    layout.addView(createChannelButton(ch, entertainmentChannels, i, "entertainment")) 
+  local displayList = {}
+  for i, ch in ipairs(entertainmentChannels) do
+    table.insert(displayList, { isSub = false, name = ch.name, url = ch.url, idx = i })
+  end
+  for _, cat in ipairs(_G.customCategoriesList) do
+    if cat.parent == "Entertainment" then
+      table.insert(displayList, { isSub = true, name = cat.name, action = function() showCustomCategoryMenu(cat.name) end })
+    end
+  end
+  table.sort(displayList, function(a, b) return a.name:lower() < b.name:lower() end)
+  
+  for _, item in ipairs(displayList) do
+    if item.isSub then
+      local btnSub = Button(service)
+      btnSub.setText(item.name)
+      btnSub.setOnClickListener(View.OnClickListener({ onClick = function(v) item.action() end }))
+      layout.addView(btnSub)
+    else
+      layout.addView(createChannelButton({name = item.name, url = item.url}, entertainmentChannels, item.idx, "entertainment"))
+    end
   end
   
   local btnBack = Button(service)
@@ -1138,8 +1138,26 @@ function showKidsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  for i, ch in ipairs(kidsChannels) do 
-    layout.addView(createChannelButton(ch, kidsChannels, i, "kids")) 
+  local displayList = {}
+  for i, ch in ipairs(kidsChannels) do
+    table.insert(displayList, { isSub = false, name = ch.name, url = ch.url, idx = i })
+  end
+  for _, cat in ipairs(_G.customCategoriesList) do
+    if cat.parent == "Kids" then
+      table.insert(displayList, { isSub = true, name = cat.name, action = function() showCustomCategoryMenu(cat.name) end })
+    end
+  end
+  table.sort(displayList, function(a, b) return a.name:lower() < b.name:lower() end)
+
+  for _, item in ipairs(displayList) do
+    if item.isSub then
+      local btnSub = Button(service)
+      btnSub.setText(item.name)
+      btnSub.setOnClickListener(View.OnClickListener({ onClick = function(v) item.action() end }))
+      layout.addView(btnSub)
+    else
+      layout.addView(createChannelButton({name = item.name, url = item.url}, kidsChannels, item.idx, "kids"))
+    end
   end
   
   local btnBack = Button(service)
@@ -1165,8 +1183,26 @@ function showReligiousMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  for i, ch in ipairs(religiousChannels) do 
-    layout.addView(createChannelButton(ch, religiousChannels, i, "religious")) 
+  local displayList = {}
+  for i, ch in ipairs(religiousChannels) do
+    table.insert(displayList, { isSub = false, name = ch.name, url = ch.url, idx = i })
+  end
+  for _, cat in ipairs(_G.customCategoriesList) do
+    if cat.parent == "Religious" then
+      table.insert(displayList, { isSub = true, name = cat.name, action = function() showCustomCategoryMenu(cat.name) end })
+    end
+  end
+  table.sort(displayList, function(a, b) return a.name:lower() < b.name:lower() end)
+
+  for _, item in ipairs(displayList) do
+    if item.isSub then
+      local btnSub = Button(service)
+      btnSub.setText(item.name)
+      btnSub.setOnClickListener(View.OnClickListener({ onClick = function(v) item.action() end }))
+      layout.addView(btnSub)
+    else
+      layout.addView(createChannelButton({name = item.name, url = item.url}, religiousChannels, item.idx, "religious"))
+    end
   end
   
   local btnBack = Button(service)
@@ -1192,8 +1228,26 @@ function showSportsMenu()
   title.setPadding(0, 10, 0, 30)
   layout.addView(title)
   
-  for i, ch in ipairs(sportsChannels) do 
-    layout.addView(createChannelButton(ch, sportsChannels, i, "sports")) 
+  local displayList = {}
+  for i, ch in ipairs(sportsChannels) do
+    table.insert(displayList, { isSub = false, name = ch.name, url = ch.url, idx = i })
+  end
+  for _, cat in ipairs(_G.customCategoriesList) do
+    if cat.parent == "Sports" then
+      table.insert(displayList, { isSub = true, name = cat.name, action = function() showCustomCategoryMenu(cat.name) end })
+    end
+  end
+  table.sort(displayList, function(a, b) return a.name:lower() < b.name:lower() end)
+
+  for _, item in ipairs(displayList) do
+    if item.isSub then
+      local btnSub = Button(service)
+      btnSub.setText(item.name)
+      btnSub.setOnClickListener(View.OnClickListener({ onClick = function(v) item.action() end }))
+      layout.addView(btnSub)
+    else
+      layout.addView(createChannelButton({name = item.name, url = item.url}, sportsChannels, item.idx, "sports"))
+    end
   end
   
   local btnBack = Button(service)
@@ -1204,6 +1258,416 @@ function showSportsMenu()
   safeShow(sportsDialog)
 end
 
+function showAddChannelMenu()
+  dismissAllDialogs()
+  local sv = ScrollView(service)
+  local layout = LinearLayout(service)
+  layout.setOrientation(LinearLayout.VERTICAL)
+  layout.setPadding(60, 40, 60, 40)
+  sv.addView(layout)
+  
+  local heading = TextView(service)
+  heading.setText("Add Channel")
+  heading.setTextSize(20)
+  heading.setGravity(Gravity.CENTER)
+  heading.setPadding(0, 10, 0, 30)
+  layout.addView(heading)
+  
+  local lblName = TextView(service)
+  lblName.setText("Enter Your Channel Name:")
+  lblName.setTextSize(14)
+  lblName.setPadding(0, 20, 0, 0)
+  layout.addView(lblName)
+  
+  local etName = EditText(service)
+  layout.addView(etName)
+  
+  local lblUrl = TextView(service)
+  lblUrl.setText("Enter Your Channel URL:")
+  lblUrl.setTextSize(14)
+  lblUrl.setPadding(0, 20, 0, 0)
+  layout.addView(lblUrl)
+  
+  local etUrl = EditText(service)
+  layout.addView(etUrl)
+  
+  local lblCategory = TextView(service)
+  lblCategory.setText("Choose Your Category:")
+  lblCategory.setTextSize(14)
+  lblCategory.setPadding(0, 20, 0, 10)
+  layout.addView(lblCategory)
+  
+  local categories = {"Entertainment", "News (Main)", "ARY News", "Geo News", "Religious", "Sports", "Kids"}
+  for _, cat in ipairs(_G.customCategoriesList) do
+    table.insert(categories, cat.name)
+  end
+  table.insert(categories, "Create a New Category...")
+  
+  local adapter = ArrayAdapter(service, android.R.layout.simple_spinner_item, categories)
+  adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+  
+  local spinner = Spinner(service)
+  spinner.setAdapter(adapter)
+  layout.addView(spinner)
+  
+  local customCatContainer = LinearLayout(service)
+  customCatContainer.setOrientation(LinearLayout.VERTICAL)
+  customCatContainer.setVisibility(View.GONE)
+  
+  local lblNewCatName = TextView(service)
+  lblNewCatName.setText("Enter New Category Name:")
+  lblNewCatName.setTextSize(14)
+  lblNewCatName.setPadding(0, 20, 0, 0)
+  customCatContainer.addView(lblNewCatName)
+  
+  local etNewCatName = EditText(service)
+  customCatContainer.addView(etNewCatName)
+  
+  local lblPlacement = TextView(service)
+  lblPlacement.setText("Select Category Placement (Parent):")
+  lblPlacement.setTextSize(14)
+  lblPlacement.setPadding(0, 20, 0, 10)
+  customCatContainer.addView(lblPlacement)
+  
+  local placements = {"Main Menu", "Entertainment", "News (Main)", "Religious", "Sports", "Kids"}
+  local placementAdapter = ArrayAdapter(service, android.R.layout.simple_spinner_item, placements)
+  placementAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+  
+  local placementSpinner = Spinner(service)
+  placementSpinner.setAdapter(placementAdapter)
+  customCatContainer.addView(placementSpinner)
+  
+  layout.addView(customCatContainer)
+  
+  local btnAdd = Button(service)
+  btnAdd.setText("Add Channel")
+  btnAdd.setPadding(0, 30, 0, 10)
+  layout.addView(btnAdd)
+  
+  local selectedCatPosition = 0
+  local selectedPlacementPosition = 0
+  
+  spinner.setOnItemSelectedListener(luajava.createProxy("android.widget.AdapterView$OnItemSelectedListener", {
+    onItemSelected = function(parent, view, position, id)
+      selectedCatPosition = position
+      if categories[position + 1] == "Create a New Category..." then
+        lblName.setVisibility(View.VISIBLE)
+        etName.setVisibility(View.VISIBLE)
+        lblUrl.setVisibility(View.VISIBLE)
+        etUrl.setVisibility(View.VISIBLE)
+        customCatContainer.setVisibility(View.VISIBLE)
+        heading.setText("Create New Category & Add Channel")
+        btnAdd.setText("Create & Add Live")
+      else
+        lblName.setVisibility(View.VISIBLE)
+        etName.setVisibility(View.VISIBLE)
+        lblUrl.setVisibility(View.VISIBLE)
+        etUrl.setVisibility(View.VISIBLE)
+        customCatContainer.setVisibility(View.GONE)
+        heading.setText("Add Channel")
+        btnAdd.setText("Add Channel")
+      end
+    end,
+    onNothingSelected = function(parent) end
+  }))
+  
+  placementSpinner.setOnItemSelectedListener(luajava.createProxy("android.widget.AdapterView$OnItemSelectedListener", {
+    onItemSelected = function(parent, view, position, id)
+      selectedPlacementPosition = position
+    end,
+    onNothingSelected = function(parent) end
+  }))
+  
+  btnAdd.setOnClickListener(View.OnClickListener({
+    onClick = function(v)
+      local selectedCat = tostring(spinner.getSelectedItem())
+      
+      if selectedCat == "Create a New Category..." then
+        local newCatName = tostring(etNewCatName.getText())
+        local parentMenu = tostring(placementSpinner.getSelectedItem())
+        
+        if newCatName == "" then
+          Toast.makeText(service, "Please enter a category name", Toast.LENGTH_SHORT).show()
+          return
+        end
+        
+        local catExists = false
+        for _, cat in ipairs(_G.customCategoriesList) do
+          if cat.name:lower() == newCatName:lower() then
+            catExists = true
+            break
+          end
+        end
+        
+        if not catExists then
+          table.insert(_G.customCategoriesList, {name = newCatName, parent = parentMenu})
+          saveCustomCategories()
+          rebuildActiveChannels()
+          Toast.makeText(service, "Category '" .. newCatName .. "' created successfully", Toast.LENGTH_SHORT).show()
+          speakText(newCatName .. " category successfully created")
+        else
+          Toast.makeText(service, "Category already exists", Toast.LENGTH_SHORT).show()
+        end
+        
+        local name = tostring(etName.getText())
+        local url = tostring(etUrl.getText())
+        
+        if name ~= "" and url ~= "" then
+          local existingIndex = nil
+          for idx, c in ipairs(_G.customChannelsList) do
+            if c.name:lower() == name:lower() then existingIndex = idx break end
+          end
+          
+          if existingIndex then
+            _G.customChannelsList[existingIndex].url = url
+            _G.customChannelsList[existingIndex].category = newCatName
+            Toast.makeText(service, name .. " replaced in " .. newCatName, Toast.LENGTH_SHORT).show()
+            speakText(name .. " successfully updated")
+          else
+            table.insert(_G.customChannelsList, {name = name, url = url, category = newCatName})
+            Toast.makeText(service, name .. " added to " .. newCatName, Toast.LENGTH_SHORT).show()
+            speakText(name .. " successfully added")
+          end
+          
+          saveCustomChannels()
+          rebuildActiveChannels()
+          dismissAllDialogs()
+          showSettingsMenu()
+        else
+          dismissAllDialogs()
+          showAddChannelMenu()
+        end
+      else
+        local name = tostring(etName.getText())
+        local url = tostring(etUrl.getText())
+        
+        if name == "" or url == "" then
+          Toast.makeText(service, "Please fill all fields", Toast.LENGTH_SHORT).show()
+          return
+        end
+        
+        local existingIndex = nil
+        for idx, c in ipairs(_G.customChannelsList) do
+          if c.name:lower() == name:lower() then existingIndex = idx break end
+        end
+        
+        if existingIndex then
+          _G.customChannelsList[existingIndex].url = url
+          _G.customChannelsList[existingIndex].category = selectedCat
+          Toast.makeText(service, name .. " replaced in " .. selectedCat, Toast.LENGTH_SHORT).show()
+          speakText(name .. " successfully updated")
+        else
+          table.insert(_G.customChannelsList, {name = name, url = url, category = selectedCat})
+          Toast.makeText(service, name .. " added to " .. selectedCat, Toast.LENGTH_SHORT).show()
+          speakText(name .. " successfully added")
+        end
+        
+        saveCustomChannels()
+        rebuildActiveChannels()
+        dismissAllDialogs()
+        showSettingsMenu()
+      end
+    end
+  }))
+  
+  local btnBack = Button(service)
+  btnBack.setText("Back to Settings")
+  btnBack.setOnClickListener(View.OnClickListener({ onClick = function(v) dismissAllDialogs() showSettingsMenu() end }))
+  layout.addView(btnBack)
+  
+  addChannelDialog = AlertDialog.Builder(service).setView(sv).create()
+  safeShow(addChannelDialog)
+end
+
+-- ڈیلیٹ آپشنز کا مین مینو
+function showDeleteMenu()
+  dismissAllDialogs()
+  local sv = ScrollView(service)
+  local layout = LinearLayout(service)
+  layout.setOrientation(LinearLayout.VERTICAL)
+  layout.setPadding(60, 40, 60, 40)
+  sv.addView(layout)
+  
+  local heading = TextView(service)
+  heading.setText("Delete Channel & Category")
+  heading.setTextSize(20)
+  heading.setGravity(Gravity.CENTER)
+  heading.setPadding(0, 10, 0, 30)
+  layout.addView(heading)
+  
+  local btnDelCh = Button(service)
+  btnDelCh.setText("Delete Channel")
+  btnDelCh.setOnClickListener(View.OnClickListener({ onClick = function(v) showDeleteChannelSubMenu() end }))
+  layout.addView(btnDelCh)
+  
+  local btnDelCat = Button(service)
+  btnDelCat.setText("Delete Category")
+  btnDelCat.setOnClickListener(View.OnClickListener({ onClick = function(v) showDeleteCategorySubMenu() end }))
+  layout.addView(btnDelCat)
+  
+  local btnBack = Button(service)
+  btnBack.setText("Back to Settings")
+  btnBack.setOnClickListener(View.OnClickListener({ onClick = function(v) dismissAllDialogs() showSettingsMenu() end }))
+  layout.addView(btnBack)
+  
+  deleteChannelDialog = AlertDialog.Builder(service).setView(sv).create()
+  safeShow(deleteChannelDialog)
+end
+
+-- کسٹم چینلز ڈیلیٹ کرنے کا مینو
+function showDeleteChannelSubMenu()
+  dismissAllDialogs()
+  local sv = ScrollView(service)
+  local layout = LinearLayout(service)
+  layout.setOrientation(LinearLayout.VERTICAL)
+  layout.setPadding(60, 40, 60, 40)
+  sv.addView(layout)
+  
+  local heading = TextView(service)
+  heading.setText("Delete Channels")
+  heading.setTextSize(20)
+  heading.setGravity(Gravity.CENTER)
+  heading.setPadding(0, 10, 0, 30)
+  layout.addView(heading)
+  
+  if #_G.customChannelsList == 0 then
+    local noChTxt = TextView(service)
+    noChTxt.setText("No custom channels found to delete.")
+    noChTxt.setTextSize(14)
+    noChTxt.setGravity(Gravity.CENTER)
+    noChTxt.setPadding(0, 20, 0, 20)
+    layout.addView(noChTxt)
+  else
+    for i, c in ipairs(_G.customChannelsList) do
+      local btn = Button(service)
+      btn.setText(c.name .. " (" .. c.category .. ")")
+      btn.setOnClickListener(View.OnClickListener({
+        onClick = function(v)
+          local chName = c.name
+          local alert = AlertDialog.Builder(service)
+          alert.setTitle("Do you want to delete " .. chName .. "?")
+          alert.setNegativeButton("No", luajava.createProxy("android.content.DialogInterface$OnClickListener", {
+            onClick = function(dialog, which) dialog.dismiss() end
+          }))
+          alert.setPositiveButton("Yes", luajava.createProxy("android.content.DialogInterface$OnClickListener", {
+            onClick = function(dialog, which)
+              -- فکس: چینل کو پسندیدہ (Favorites) لسٹ سے بھی حذف کریں
+              local chUrl = c.url
+              for fIdx = #_G.favoritesList, 1, -1 do
+                if _G.favoritesList[fIdx].url == chUrl then
+                  table.remove(_G.favoritesList, fIdx)
+                end
+              end
+              saveFavorites()
+
+              table.remove(_G.customChannelsList, i)
+              saveCustomChannels()
+              rebuildActiveChannels()
+              Toast.makeText(service, chName .. " Deleted Permanently", Toast.LENGTH_SHORT).show()
+              speakText(chName .. " deleted")
+              dialog.dismiss()
+              showDeleteChannelSubMenu()
+            end
+          }))
+          local alertDialog = alert.create()
+          alertDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+          alertDialog.show()
+        end
+      }))
+      layout.addView(btn)
+    end
+  end
+  
+  local btnBack = Button(service)
+  btnBack.setText("Back")
+  btnBack.setOnClickListener(View.OnClickListener({ onClick = function(v) showDeleteMenu() end }))
+  layout.addView(btnBack)
+  
+  deleteChannelDialog = AlertDialog.Builder(service).setView(sv).create()
+  safeShow(deleteChannelDialog)
+end
+
+-- کسٹم کیٹیگریز ڈیلیٹ کرنے کا مینو
+function showDeleteCategorySubMenu()
+  dismissAllDialogs()
+  local sv = ScrollView(service)
+  local layout = LinearLayout(service)
+  layout.setOrientation(LinearLayout.VERTICAL)
+  layout.setPadding(60, 40, 60, 40)
+  sv.addView(layout)
+  
+  local heading = TextView(service)
+  heading.setText("Delete Categories")
+  heading.setTextSize(20)
+  heading.setGravity(Gravity.CENTER)
+  heading.setPadding(0, 10, 0, 30)
+  layout.addView(heading)
+  
+  if #_G.customCategoriesList == 0 then
+    local noCatTxt = TextView(service)
+    noCatTxt.setText("No custom categories found to delete.")
+    noCatTxt.setTextSize(14)
+    noCatTxt.setGravity(Gravity.CENTER)
+    noCatTxt.setPadding(0, 20, 0, 20)
+    layout.addView(noCatTxt)
+  else
+    for i, cat in ipairs(_G.customCategoriesList) do
+      local btn = Button(service)
+      btn.setText(cat.name .. " (" .. cat.parent .. ")")
+      btn.setOnClickListener(View.OnClickListener({
+        onClick = function(v)
+          local catName = cat.name
+          local alert = AlertDialog.Builder(service)
+          alert.setTitle("Do you want to delete category " .. catName .. "?")
+          alert.setNegativeButton("No", luajava.createProxy("android.content.DialogInterface$OnClickListener", {
+            onClick = function(dialog, which) dialog.dismiss() end
+          }))
+          alert.setPositiveButton("Yes", luajava.createProxy("android.content.DialogInterface$OnClickListener", {
+            onClick = function(dialog, which)
+              table.remove(_G.customCategoriesList, i)
+              saveCustomCategories()
+              
+              for j = #_G.customChannelsList, 1, -1 do
+                if _G.customChannelsList[j].category == catName then
+                  -- فکس: اس کیٹیگری کے جتنے بھی چینلز ہیں، انہیں پسندیدہ (Favorites) سے بھی ہٹائیں
+                  local chUrl = _G.customChannelsList[j].url
+                  for fIdx = #_G.favoritesList, 1, -1 do
+                    if _G.favoritesList[fIdx].url == chUrl then
+                      table.remove(_G.favoritesList, fIdx)
+                    end
+                  end
+                  table.remove(_G.customChannelsList, j)
+                end
+              end
+              saveFavorites()
+              saveCustomChannels()
+              rebuildActiveChannels()
+              
+              Toast.makeText(service, catName .. " Category Deleted Permanently", Toast.LENGTH_SHORT).show()
+              speakText(catName .. " deleted")
+              dialog.dismiss()
+              showDeleteCategorySubMenu()
+            end
+          }))
+          local alertDialog = alert.create()
+          alertDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+          alertDialog.show()
+        end
+      }))
+      layout.addView(btn)
+    end
+  end
+  
+  local btnBack = Button(service)
+  btnBack.setText("Back")
+  btnBack.setOnClickListener(View.OnClickListener({ onClick = function(v) showDeleteMenu() end }))
+  layout.addView(btnBack)
+  
+  deleteChannelDialog = AlertDialog.Builder(service).setView(sv).create()
+  safeShow(deleteChannelDialog)
+end
+
+-- اباؤٹ مینو کا مکمل تفصیلی فنکشن (بالکل اسی جگہ فکسڈ تفصیلات کے ساتھ)
 function showAboutMenu()
   dismissAllDialogs()
   local sv = ScrollView(service)
@@ -1212,7 +1676,7 @@ function showAboutMenu()
   layout.setPadding(60, 40, 60, 40)
   sv.addView(layout)
   
-  -- 1. مین ٹائٹل ہیڈنگ
+  -- مینو کا مین ٹائٹل
   local title = TextView(service)
   title.setText("About Smart TV Extension")
   title.setTextSize(18)
@@ -1220,7 +1684,7 @@ function showAboutMenu()
   title.setPadding(0, 10, 0, 20)
   layout.addView(title)
   
-  -- 2. لائیو ٹی وی او ٹی ٹی چینلز کیٹیگریز کا حصہ
+  -- ایپ کی تفصیلی گائیڈ بشمول چینل اور کسٹم کیٹیگری مینجمنٹ کی مکمل لاجک
   local infoTxt = TextView(service)
   infoTxt.setTextSize(14)
   infoTxt.setText("This extension is designed to provide seamless live television access categorization-wise:\n\n" ..
@@ -1228,39 +1692,53 @@ function showAboutMenu()
                  "2. Live News: Mainstream news networks directly streamed.\n" ..
                  "3. Religious: Holy streams including Makkah Live and spiritual content.\n" ..
                  "4. Live Sports: Realtime action of your favorite matches.\n" ..
-                 "5. Live Kids: Fun and educational content for children.\n\n")
+                 "5. Live Kids: Fun and educational content for children.\n\n" ..
+                 "CUSTOM CUSTOMIZATION & MANAGEMENT SYSTEM:\n" ..
+                 "--------------------------------------------------\n" ..
+                 "• CHANNEL MANAGEMENT:\n" ..
+                 "  - Add Channel: This option allows you to manually insert a custom Channel Name and its streaming URL. You can easily link it to any default category or route it inside your own custom categories.\n" ..
+                 "  - Delete Channel: This tool allows you to safely view all custom added channels and delete any specific channel permanently to keep your stream list precise.\n\n" ..
+                 "• CATEGORY MANAGEMENT:\n" ..
+                 "  - Create New Category: This feature gives you full power to build custom categories with a custom Parent Placement (such as Main Menu, Entertainment, Live News, etc.) smoothly.\n" ..
+                 "  - Delete Category: This manager lets you permanently delete any custom category you created, which automatically clears and flushes all embedded channels tied to it for a clean user interface layout.\n\n")
   infoTxt.setPadding(0, 10, 0, 10)
   layout.addView(infoTxt)
   
-  -- 3. ڈیویلپمنٹ کریڈٹس کی الگ ہیڈنگ اور سادہ تفصیلات
+  -- ڈویلپمنٹ کریڈٹس کی ہیڈنگ
   local creditsTitle = TextView(service)
   creditsTitle.setText("DEVELOPMENT CREDITS")
   creditsTitle.setTextSize(16)
   creditsTitle.setPadding(0, 10, 0, 10)
   layout.addView(creditsTitle)
   
+  -- ڈویلپرز کے نام اور تفصیلات
   local creditsTxt = TextView(service)
   creditsTxt.setTextSize(14)
   creditsTxt.setText("Lead Conception and Architecture:\n" ..
                      "Ahmad Ali\n" ..
-                     "Responsible for the core concept and initiating the main structure.\n\n" ..
+                     "Responsible for the core concept, main structure, and Category/Channel management planning.\n\n" ..
                      "Core Integration and Feature Engineering:\n" ..
                      "Ali Gujjar\n" ..
-                     "Responsible for channel source integration and scaling playback features.\n\n" ..
+                     "Responsible for channel source integration, playback features, and core implementation of Category/Channel Add/Delete logic.\n\n" ..
                      "Technical Optimization and Debugging:\n" ..
                      "Azlan Tahir\n" ..
-                     "Responsible for fixing system bugs and optimizing code efficiency.\n\n" ..
+                     "Responsible for fixing system bugs, optimizing code efficiency, and debugging Category/Channel features.\n\n" ..
                      "Proudly developed with advanced accessibility compliance for smooth and intuitive interactions.")
   creditsTxt.setPadding(0, 0, 0, 30)
   layout.addView(creditsTxt)
   
-  -- 4. کینسل کا بٹن (جو پہلے بیک ٹو سیٹنگ کی جگہ پر سویپ ہو کر آیا ہے)
+  -- 4. کینسل (Cancel) بٹن کی لاجک
   local btnCancel = Button(service)
   btnCancel.setText("Cancel")
-  btnCancel.setOnClickListener(View.OnClickListener({ onClick = function(v) dismissAllDialogs() showSettingsMenu() end }))
+  btnCancel.setOnClickListener(View.OnClickListener({ 
+    onClick = function(v) 
+      dismissAllDialogs() 
+      showSettingsMenu() 
+    end 
+  }))
   layout.addView(btnCancel)
   
-  -- 5. ہیلپ اینڈ فیڈ بیک کا بٹن (جو اب نیچے ایا ہے)
+  -- 5. ہیلپ اینڈ فیڈ بیک (Help & Feedback) بٹن کی مکمل لاجک
   local btnHelp = Button(service)
   btnHelp.setText("Help & Feedback")
   btnHelp.setOnClickListener(View.OnClickListener({
@@ -1277,6 +1755,7 @@ function showAboutMenu()
         _G.SmartTV_IsFullScreen = false
         _G.SmartTV_IsPlayerMinimized = false
         dismissAllDialogs()
+        
         if playerDialog then 
           if myWebView then 
             pcall(function() 
@@ -1305,13 +1784,22 @@ function showSettingsMenu()
   layout.setPadding(60, 40, 60, 40)
   sv.addView(layout)
   
-  -- ایکسیسیبلٹی فوکس کے لیے سیٹنگز کا مخصوص ٹائٹل ہیڈر
   local settingsTitle = TextView(service)
   settingsTitle.setText("Smart TV Settings")
   settingsTitle.setTextSize(18)
   settingsTitle.setGravity(Gravity.CENTER)
   settingsTitle.setPadding(0, 10, 0, 40)
   layout.addView(settingsTitle)
+  
+  local btnAddChannel = Button(service)
+  btnAddChannel.setText("Add Channel")
+  btnAddChannel.setOnClickListener(View.OnClickListener({ onClick = function(v) showAddChannelMenu() end }))
+  layout.addView(btnAddChannel)
+  
+  local btnDeleteChannel = Button(service)
+  btnDeleteChannel.setText("Delete Channel & Category")
+  btnDeleteChannel.setOnClickListener(View.OnClickListener({ onClick = function(v) showDeleteMenu() end }))
+  layout.addView(btnDeleteChannel)
   
   local btnAudioToggle = Button(service)
   btnAudioToggle.setText("Play TV in Audio Mode: " .. (_G.isAudioOnlyMode and "ON" or "OFF"))
@@ -1320,7 +1808,7 @@ function showSettingsMenu()
       _G.isAudioOnlyMode = not _G.isAudioOnlyMode
       local editor = pref.edit()
       editor.putInt("isAudioMode", _G.isAudioOnlyMode and 1 or 0)
-      editor.apply()
+      editor.commit()
       btnAudioToggle.setText("Play TV in Audio Mode: " .. (_G.isAudioOnlyMode and "ON" or "OFF"))
       speakText("Audio Mode " .. (_G.isAudioOnlyMode and "ON" or "OFF"))
     end
@@ -1334,7 +1822,7 @@ function showSettingsMenu()
       _G.isBackgroundPlayEnabled = not _G.isBackgroundPlayEnabled
       local editor = pref.edit()
       editor.putInt("isBackgroundPlayMode", _G.isBackgroundPlayEnabled and 1 or 0)
-      editor.apply()
+      editor.commit()
       btnBackgroundToggle.setText("Background Play: " .. (_G.isBackgroundPlayEnabled and "ON" or "OFF"))
       speakText("Background Play " .. (_G.isBackgroundPlayEnabled and "ON" or "OFF"))
     end
@@ -1350,31 +1838,6 @@ function showSettingsMenu()
       _G.selectedQuality = qualityLevels[_G.qualityIdx]
       btnQuality.setText("Video Quality: " .. _G.selectedQuality)
       speakText("Quality set to " .. _G.selectedQuality)
-      
-      if myWebView then
-        local activeQJS = [[
-          (function() {
-            var q = "]].._G.selectedQuality..[[";
-            var elements = document.querySelectorAll('button, li, span, a, div');
-            for(var i=0; i<elements.length; i++){
-              var txt = (elements[i].innerText || elements[i].getAttribute('aria-label') || '').toLowerCase();
-              if(txt === 'quality' || txt.indexOf('quality') !== -1){
-                 try { elements[i].click(); break; } catch(e){}
-              }
-            }
-            setTimeout(function() {
-              var el2 = document.querySelectorAll('button, li, span, a, div');
-              for(var j=0; j<el2.length; j++){
-                var txt2 = (el2[j].innerText || el2[j].getAttribute('aria-label') || '').toLowerCase();
-                if(txt2.indexOf(q.toLowerCase()) !== -1){
-                  try { el2[j].click(); break; } catch(e){}
-                }
-              }
-            }, 300);
-          })();
-        ]]
-        myWebView.evaluateJavascript(activeQJS, nil)
-      end
     end
   }))
   layout.addView(btnQuality)
@@ -1401,7 +1864,6 @@ function showTvMenu()
         local win = _G.SmartTV_PlayerDialog.getWindow()
         win.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) 
         win.setBackgroundDrawable(ColorDrawable(0xFF000000))
-        
         if playerMainContainer then playerMainContainer.setBackgroundColor(0xFF000000) end
         if _G.SmartTV_TxtNowPlaying then _G.SmartTV_TxtNowPlaying.setVisibility(View.VISIBLE) end
         if _G.SmartTV_ControlsParent then _G.SmartTV_ControlsParent.setVisibility(View.VISIBLE) end
@@ -1412,7 +1874,6 @@ function showTvMenu()
           _G.SmartTV_WebContainer.setLayoutParams(lp)
         end
         if _G.SmartTV_MyWebView then _G.SmartTV_MyWebView.setBackgroundColor(0xFF000000) end
-        
         _G.SmartTV_PlayerDialog.show()
       end
     end)
@@ -1434,11 +1895,20 @@ function showTvMenu()
   layout.addView(title)
   
   local buttons = {}
-  table.insert(buttons, {text="Live Entertainment", action=showChannelsMenu})
-  table.insert(buttons, {text="Live Kids", action=showKidsMenu})
-  table.insert(buttons, {text="Live News", action=showNewsMenu})
-  table.insert(buttons, {text="Live Religious", action=showReligiousMenu})
-  table.insert(buttons, {text="Live Sports", action=showSportsMenu})
+  table.insert(buttons, {text="Live Entertainment", action=showChannelsMenu, sortName="Live Entertainment"})
+  table.insert(buttons, {text="Live Kids", action=showKidsMenu, sortName="Live Kids"})
+  table.insert(buttons, {text="Live News", action=showNewsMenu, sortName="Live News"})
+  table.insert(buttons, {text="Live Religious", action=showReligiousMenu, sortName="Live Religious"})
+  table.insert(buttons, {text="Live Sports", action=showSportsMenu, sortName="Live Sports"})
+  
+  for _, cat in ipairs(_G.customCategoriesList) do
+    if cat.parent == "Main Menu" then
+      table.insert(buttons, {text=cat.name, action=function() showCustomCategoryMenu(cat.name) end, sortName=cat.name})
+    end
+  end
+  
+  table.sort(buttons, function(a, b) return a.sortName:lower() < b.sortName:lower() end)
+  
   table.insert(buttons, {text="Favorites", action=showFavoritesMenu})
   table.insert(buttons, {text="Settings", action=showSettingsMenu})
   table.insert(buttons, {text="Close Extension", action=closeExtension})
