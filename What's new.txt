@@ -1,0 +1,10 @@
+CUSTOMIZATION & MANAGEMENT SYSTEM:
+--------------------------------------------------
+• CHANNEL MANAGEMENT:
+  - Add Channel: This option allows you to manually insert a custom Channel Name and its streaming URL. You can easily link it to any default category or route it inside your own custom categories.
+  - Delete Channel: This tool allows you to safely view all custom added channels and delete any specific channel permanently to keep your stream list precise.
+
+• CATEGORY MANAGEMENT:
+  - Create New Category: This feature gives you full power to build custom categories with a custom Parent Placement (such as Main Menu, Entertainment, Live News, etc.) smoothly.
+  - Delete Category: This manager lets you permanently delete any custom category you created, which automatically clears and flushes all embedded channels tied to it for a clean user interface layout.
+
