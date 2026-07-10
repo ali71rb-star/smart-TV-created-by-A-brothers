@@ -1,1 +1,4 @@
-​Fixed Wi-Fi connectivity issues on Samsung devices.
+Geo Network has been temporarily removed due to technical reasons. It will be restored soon.
+- Fixed full-screen gesture issues.
+ Removed dialogue spacing.
+-
