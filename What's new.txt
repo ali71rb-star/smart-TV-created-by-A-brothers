@@ -1,4 +1,6 @@
-Geo Network has been temporarily removed due to technical reasons. It will be restored soon.
-- Fixed full-screen gesture issues.
- Removed dialogue spacing.
--
+Geo Network has been temporarily taken offline due to technical reasons. It will be restored shortly.
+
+   Fixed full-screen gesture issues.
+   Removed dialogue spacing.
+   Added four channels to the news category.
+   Implemented stability fixes.
