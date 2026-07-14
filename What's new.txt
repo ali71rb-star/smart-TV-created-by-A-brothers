@@ -4,3 +4,5 @@ Geo Network has been temporarily taken offline due to technical reasons. It will
    Removed dialogue spacing.
    Added four channels to the news category.
    Implemented stability fixes.
+
+You can listen now all tutorial about smart TV in the about section. 
